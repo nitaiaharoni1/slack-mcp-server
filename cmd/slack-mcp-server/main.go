@@ -68,30 +68,38 @@ func main() {
 		)
 	}
 
-	p := provider.New(transport, logger)
-	s := server.NewMCPServer(p, logger, enabledTools)
+	registry, err := provider.NewRegistryFromEnv(transport, logger)
+	if err != nil {
+		logger.Fatal("Failed to initialize Slack accounts",
+			zap.String("context", "console"),
+			zap.Error(err),
+		)
+	}
+	s := server.NewMCPServer(registry, logger, enabledTools)
 
 	if noCache {
-		p.SkipCache()
+		for _, ap := range registry.All() {
+			ap.SkipCache()
+		}
 		logger.Info("Cache loading disabled via --no-cache flag",
 			zap.String("context", "console"),
 		)
 	} else {
-		go func() {
-			var once sync.Once
-
-			newUsersWatcher(p, &once, logger)()
-			newChannelsWatcher(p, &once, logger)()
-		}()
+		var once sync.Once
+		for _, ap := range registry.All() {
+			go func(ap *provider.ApiProvider) {
+				newUsersWatcher(ap, registry, &once, logger)()
+				newChannelsWatcher(ap, registry, &once, logger)()
+			}(ap)
+		}
 	}
-
 	switch transport {
 	case "stdio":
 		// Wait for caches to be ready before accepting stdio requests.
 		// With stale-while-revalidate this exits in one tick (~100ms).
 		// On cold start (no cache), this blocks until the initial fetch completes.
 		for {
-			if ready, _ := p.IsReady(); ready {
+			if ready, _ := registry.IsReady(); ready {
 				break
 			}
 			time.Sleep(100 * time.Millisecond)
@@ -120,7 +128,7 @@ func main() {
 			zap.String("port", port),
 		)
 
-		if ready, _ := p.IsReady(); !ready {
+		if ready, _ := registry.IsReady(); !ready {
 			logger.Info("Slack MCP Server is still warming up caches",
 				zap.String("context", "console"),
 			)
@@ -150,7 +158,7 @@ func main() {
 			zap.String("port", port),
 		)
 
-		if ready, _ := p.IsReady(); !ready {
+		if ready, _ := registry.IsReady(); !ready {
 			logger.Info("Slack MCP Server is still warming up caches",
 				zap.String("context", "console"),
 			)
@@ -171,13 +179,14 @@ func main() {
 	}
 }
 
-func newUsersWatcher(p *provider.ApiProvider, once *sync.Once, logger *zap.Logger) func() {
+func newUsersWatcher(p *provider.ApiProvider, registry *provider.Registry, once *sync.Once, logger *zap.Logger) func() {
 	return func() {
 		logger.Info("Caching users collection...",
 			zap.String("context", "console"),
+			zap.String("account", p.Name()),
 		)
 
-		if os.Getenv("SLACK_MCP_XOXP_TOKEN") == "demo" || (os.Getenv("SLACK_MCP_XOXC_TOKEN") == "demo" && os.Getenv("SLACK_MCP_XOXD_TOKEN") == "demo") {
+		if p.IsDemo() {
 			logger.Info("Demo credentials are set, skip",
 				zap.String("context", "console"),
 			)
@@ -192,7 +201,7 @@ func newUsersWatcher(p *provider.ApiProvider, once *sync.Once, logger *zap.Logge
 			)
 		}
 
-		ready, _ := p.IsReady()
+		ready, _ := registry.IsReady()
 		if ready {
 			once.Do(func() {
 				logger.Info("Slack MCP Server is fully ready",
@@ -203,13 +212,14 @@ func newUsersWatcher(p *provider.ApiProvider, once *sync.Once, logger *zap.Logge
 	}
 }
 
-func newChannelsWatcher(p *provider.ApiProvider, once *sync.Once, logger *zap.Logger) func() {
+func newChannelsWatcher(p *provider.ApiProvider, registry *provider.Registry, once *sync.Once, logger *zap.Logger) func() {
 	return func() {
 		logger.Info("Caching channels collection...",
 			zap.String("context", "console"),
+			zap.String("account", p.Name()),
 		)
 
-		if os.Getenv("SLACK_MCP_XOXP_TOKEN") == "demo" || (os.Getenv("SLACK_MCP_XOXC_TOKEN") == "demo" && os.Getenv("SLACK_MCP_XOXD_TOKEN") == "demo") {
+		if p.IsDemo() {
 			logger.Info("Demo credentials are set, skip.",
 				zap.String("context", "console"),
 			)
@@ -224,7 +234,7 @@ func newChannelsWatcher(p *provider.ApiProvider, once *sync.Once, logger *zap.Lo
 			)
 		}
 
-		ready, _ := p.IsReady()
+		ready, _ := registry.IsReady()
 		if ready {
 			once.Do(func() {
 				logger.Info("Slack MCP Server is fully ready.",

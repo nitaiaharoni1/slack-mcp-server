@@ -21,6 +21,33 @@ This feature-rich Slack MCP Server has:
 - **Cache support**: Cache users and channels for faster access.
 - **Stdio/SSE/HTTP Transports & Proxy Support**: Use the server with any MCP client that supports Stdio, SSE or HTTP transports, and configure it to route outgoing requests through a proxy if needed.
 
+## This fork: multiple accounts and more tools
+
+This fork of [korotovsky/slack-mcp-server](https://github.com/korotovsky/slack-mcp-server) adds:
+
+- **Multiple accounts in one server.** Every tool takes an optional `account` argument; `list_accounts` shows each account's workspace, user and token type. Each account has its own client, caches and rate limiter.
+- **Messages:** `messages_update`, `messages_delete`, `messages_schedule`, `messages_scheduled_list`, `messages_scheduled_delete`, `messages_permalink`. Writes follow the `SLACK_MCP_ADD_MESSAGE_TOOL` channel policy.
+- **Files and people:** `files_upload` (up to 5 MB, same policy), `users_info` (full profile with custom fields).
+- **Canvases:** `canvases_create` (standalone or a channel's canvas), `canvases_read`, `canvases_edit`, `canvases_sections_lookup`, `canvases_delete`. Writes need `SLACK_MCP_CANVAS_TOOL=true`.
+- **Lists:** `lists_create`, `lists_items_list`, `lists_item_get`, `lists_items_create`, `lists_items_update`, `lists_items_delete`. Writes need `SLACK_MCP_LISTS_TOOL=true`.
+
+Messages sent with a user token (`xoxp`) are posted as you, with no "Sent using" app label.
+
+Accounts:
+
+```bash
+SLACK_MCP_ACCOUNTS=vistral,lighthouse          # names: lowercase letters, digits, - and _
+SLACK_MCP_DEFAULT_ACCOUNT=vistral              # optional; defaults to the first one
+SLACK_MCP_VISTRAL_XOXP_TOKEN=xoxp-...          # per account: _XOXP_TOKEN, _XOXB_TOKEN, or _XOXC_TOKEN + _XOXD_TOKEN
+SLACK_MCP_LIGHTHOUSE_XOXP_TOKEN=xoxp-...
+```
+
+Without `SLACK_MCP_ACCOUNTS` the server reads the upstream single-account variables (`SLACK_MCP_XOXP_TOKEN`, ...) as account `default`.
+
+Getting a user token: create an app from [`docs/slack-app-manifest.json`](docs/slack-app-manifest.json) at api.slack.com/apps ("From a manifest"), install it to the workspace, and copy the **User OAuth Token** (`xoxp-...`). Repeat per workspace.
+
+Not available through Slack's public API, so not here: message drafts.
+
 ### Analytics Demo
 
 ![Analytics](images/feature-1.gif)

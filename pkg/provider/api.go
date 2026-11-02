@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -147,11 +148,8 @@ func getMinRefreshInterval() time.Duration {
 // This ensures tokens are valid before proceeding and enables cache namespacing
 // to prevent cache contamination when using multiple Slack workspaces.
 // Returns an error if authentication fails - the server should not start with invalid credentials.
-func validateAuthAndGetTeamID(authProvider auth.Provider, logger *zap.Logger) (string, error) {
-	xoxpToken := os.Getenv("SLACK_MCP_XOXP_TOKEN")
-	xoxcToken := os.Getenv("SLACK_MCP_XOXC_TOKEN")
-	xoxdToken := os.Getenv("SLACK_MCP_XOXD_TOKEN")
-	if xoxpToken == "demo" || (xoxcToken == "demo" && xoxdToken == "demo") {
+func validateAuthAndGetTeamID(authProvider auth.Provider, demo bool, logger *zap.Logger) (string, error) {
+	if demo {
 		return "demo", nil
 	}
 
@@ -210,6 +208,8 @@ type Channel struct {
 }
 
 type SlackAPI interface {
+	ExtendedSlackAPI
+
 	// Standard slack-go API methods
 	AuthTest() (*slack.AuthTestResponse, error)
 	AuthTestContext(ctx context.Context) (*slack.AuthTestResponse, error)
@@ -260,6 +260,7 @@ type SlackAPI interface {
 }
 
 type MCPSlackClient struct {
+	httpClient  *http.Client
 	slackClient *slack.Client
 	edgeClient  *edge.Client
 
@@ -274,6 +275,8 @@ type MCPSlackClient struct {
 }
 
 type ApiProvider struct {
+	name      string // account name, as passed in the tools' account argument
+	demo      bool
 	transport string
 	client    SlackAPI
 	logger    *zap.Logger
@@ -348,6 +351,7 @@ func NewMCPSlackClient(authProvider auth.Provider, logger *zap.Logger) (*MCPSlac
 	isBotToken := strings.HasPrefix(token, "xoxb-") || strings.HasPrefix(token, "xoxe.xoxb-")
 
 	return &MCPSlackClient{
+		httpClient:   httpClient,
 		slackClient:  slackClient,
 		edgeClient:   edgeClient,
 		authResponse: authResponse,
@@ -360,7 +364,8 @@ func NewMCPSlackClient(authProvider auth.Provider, logger *zap.Logger) (*MCPSlac
 }
 
 func (c *MCPSlackClient) AuthTest() (*slack.AuthTestResponse, error) {
-	if os.Getenv("SLACK_MCP_XOXP_TOKEN") == "demo" || (os.Getenv("SLACK_MCP_XOXC_TOKEN") == "demo" && os.Getenv("SLACK_MCP_XOXD_TOKEN") == "demo") {
+	// Demo accounts never build a client, so a nil receiver means demo.
+	if c == nil {
 		return &slack.AuthTestResponse{
 			URL:          "https://_.slack.com",
 			Team:         "Demo Team",
@@ -630,97 +635,57 @@ func (c *MCPSlackClient) Raw() struct {
 	}
 }
 
+// New builds the provider for the single account configured by the legacy
+// SLACK_MCP_XOXP_TOKEN / XOXB / XOXC+XOXD environment variables.
 func New(transport string, logger *zap.Logger) *ApiProvider {
-	var (
-		authProvider auth.ValueAuth
-		err          error
-	)
-
-	// Read all environment variables
-	xoxpToken := os.Getenv("SLACK_MCP_XOXP_TOKEN")
-	xoxbToken := os.Getenv("SLACK_MCP_XOXB_TOKEN")
-	xoxcToken := os.Getenv("SLACK_MCP_XOXC_TOKEN")
-	xoxdToken := os.Getenv("SLACK_MCP_XOXD_TOKEN")
-
-	// Warn if both user and bot tokens are set
-	if xoxpToken != "" && xoxbToken != "" {
-		logger.Warn(
-			"Both SLACK_MCP_XOXP_TOKEN and SLACK_MCP_XOXB_TOKEN are set. "+
-				"Using User token (xoxp) for full features. "+
-				"Bot token will be ignored.",
-			zap.String("context", "console"),
-		)
-	}
-
-	// Priority 1: XOXP token (User OAuth)
-	if xoxpToken != "" {
-		authProvider, err = auth.NewValueAuth(xoxpToken, "")
-		if err != nil {
-			logger.Fatal("Failed to create auth provider with XOXP token", zap.Error(err))
-		}
-
-		return newWithXOXP(transport, authProvider, logger)
-	}
-
-	// Priority 2: XOXB token (Bot)
-	if xoxbToken != "" {
-		authProvider, err = auth.NewValueAuth(xoxbToken, "")
-		if err != nil {
-			logger.Fatal("Failed to create auth provider with XOXB token", zap.Error(err))
-		}
-
-		logger.Info("Using Bot token authentication",
-			zap.String("context", "console"),
-			zap.String("token_type", "xoxb"),
-		)
-
-		return newWithXOXB(transport, authProvider, logger)
-	}
-
-	// Priority 3: XOXC/XOXD tokens (session-based)
-	if xoxcToken == "" || xoxdToken == "" {
-		logger.Fatal("Authentication required: Either SLACK_MCP_XOXP_TOKEN, SLACK_MCP_XOXB_TOKEN, or both SLACK_MCP_XOXC_TOKEN and SLACK_MCP_XOXD_TOKEN must be provided")
-	}
-
-	authProvider, err = auth.NewValueAuth(xoxcToken, xoxdToken)
+	ap, err := NewFromCredentials(transport, LegacyCredentials(), true, logger)
 	if err != nil {
-		logger.Fatal("Failed to create auth provider with XOXC/XOXD tokens", zap.Error(err))
+		logger.Fatal("Failed to initialize Slack provider", zap.Error(err))
 	}
-
-	return newWithXOXC(transport, authProvider, logger)
+	return ap
 }
 
-func newWithXOXP(transport string, authProvider auth.ValueAuth, logger *zap.Logger) *ApiProvider {
-	var (
-		client *MCPSlackClient
-		err    error
-	)
+// NewFromCredentials builds the provider for one Slack account.
+// singleAccount lets SLACK_MCP_USERS_CACHE / SLACK_MCP_CHANNELS_CACHE override
+// the cache paths; with several accounts each one keeps its team-scoped path.
+func NewFromCredentials(transport string, creds Credentials, singleAccount bool, logger *zap.Logger) (*ApiProvider, error) {
+	logger = logger.With(zap.String("account", creds.Name))
 
-	teamID, err := validateAuthAndGetTeamID(authProvider, logger)
+	authProvider, err := creds.authProvider(logger)
 	if err != nil {
-		logger.Fatal("Authentication failed - check your Slack tokens", zap.Error(err))
+		return nil, err
 	}
 
-	usersCache := os.Getenv("SLACK_MCP_USERS_CACHE")
-	if usersCache == "" {
-		usersCache = getCachePathWithTeamID(teamID, "users_cache.json")
+	demo := creds.IsDemo()
+	teamID, err := validateAuthAndGetTeamID(authProvider, demo, logger)
+	if err != nil {
+		return nil, fmt.Errorf("account %q: authentication failed, check its Slack tokens: %w", creds.Name, err)
 	}
 
-	channelsCache := os.Getenv("SLACK_MCP_CHANNELS_CACHE")
-	if channelsCache == "" {
-		channelsCache = getCachePathWithTeamID(teamID, "channels_cache_v2.json")
+	usersCache := getCachePathWithTeamID(teamID, "users_cache.json")
+	channelsCache := getCachePathWithTeamID(teamID, "channels_cache_v2.json")
+	if singleAccount {
+		if v := os.Getenv("SLACK_MCP_USERS_CACHE"); v != "" {
+			usersCache = v
+		}
+		if v := os.Getenv("SLACK_MCP_CHANNELS_CACHE"); v != "" {
+			channelsCache = v
+		}
 	}
 
-	if os.Getenv("SLACK_MCP_XOXP_TOKEN") == "demo" || (os.Getenv("SLACK_MCP_XOXC_TOKEN") == "demo" && os.Getenv("SLACK_MCP_XOXD_TOKEN") == "demo") {
+	var client *MCPSlackClient
+	if demo {
 		logger.Info("Demo credentials are set, skip.")
 	} else {
 		client, err = NewMCPSlackClient(authProvider, logger)
 		if err != nil {
-			logger.Fatal("Failed to create MCP Slack client", zap.Error(err))
+			return nil, fmt.Errorf("account %q: failed to create Slack client: %w", creds.Name, err)
 		}
 	}
 
 	ap := &ApiProvider{
+		name:      creds.Name,
+		demo:      demo,
 		transport: transport,
 		client:    client,
 		logger:    logger,
@@ -741,67 +706,7 @@ func newWithXOXP(transport string, authProvider auth.ValueAuth, logger *zap.Logg
 		Channels:    make(map[string]Channel),
 		ChannelsInv: make(map[string]string),
 	})
-	return ap
-}
-
-func newWithXOXB(transport string, authProvider auth.ValueAuth, logger *zap.Logger) *ApiProvider {
-	// Bot tokens do not support demo mode, but otherwise share the same
-	// initialization logic as user OAuth tokens.
-	return newWithXOXP(transport, authProvider, logger)
-}
-
-func newWithXOXC(transport string, authProvider auth.ValueAuth, logger *zap.Logger) *ApiProvider {
-	var (
-		client *MCPSlackClient
-		err    error
-	)
-
-	teamID, err := validateAuthAndGetTeamID(authProvider, logger)
-	if err != nil {
-		logger.Fatal("Authentication failed - check your Slack tokens", zap.Error(err))
-	}
-
-	usersCache := os.Getenv("SLACK_MCP_USERS_CACHE")
-	if usersCache == "" {
-		usersCache = getCachePathWithTeamID(teamID, "users_cache.json")
-	}
-
-	channelsCache := os.Getenv("SLACK_MCP_CHANNELS_CACHE")
-	if channelsCache == "" {
-		channelsCache = getCachePathWithTeamID(teamID, "channels_cache_v2.json")
-	}
-
-	if os.Getenv("SLACK_MCP_XOXP_TOKEN") == "demo" || (os.Getenv("SLACK_MCP_XOXC_TOKEN") == "demo" && os.Getenv("SLACK_MCP_XOXD_TOKEN") == "demo") {
-		logger.Info("Demo credentials are set, skip.")
-	} else {
-		client, err = NewMCPSlackClient(authProvider, logger)
-		if err != nil {
-			logger.Fatal("Failed to create MCP Slack client", zap.Error(err))
-		}
-	}
-
-	ap := &ApiProvider{
-		transport: transport,
-		client:    client,
-		logger:    logger,
-
-		rateLimiter:        limiter.Tier2.Limiter(),
-		cacheTTL:           getCacheTTL(),
-		minRefreshInterval: getMinRefreshInterval(),
-
-		usersCachePath:    usersCache,
-		channelsCachePath: channelsCache,
-	}
-	// Initialize with empty snapshots
-	ap.usersSnapshot.Store(&UsersCache{
-		Users:    make(map[string]slack.User),
-		UsersInv: make(map[string]string),
-	})
-	ap.channelsSnapshot.Store(&ChannelsCache{
-		Channels:    make(map[string]Channel),
-		ChannelsInv: make(map[string]string),
-	})
-	return ap
+	return ap, nil
 }
 
 func (ap *ApiProvider) RefreshUsers(ctx context.Context) error {
@@ -1363,6 +1268,21 @@ func (ap *ApiProvider) IsReady() (bool, error) {
 func (ap *ApiProvider) SkipCache() {
 	ap.usersReady.Store(true)
 	ap.channelsReady.Store(true)
+}
+
+// Name is the account name this provider serves.
+func (ap *ApiProvider) Name() string {
+	return ap.name
+}
+
+// IsDemo reports whether the account runs on demo credentials (no Slack calls).
+func (ap *ApiProvider) IsDemo() bool {
+	return ap.demo
+}
+
+// IsSessionToken reports whether the account uses browser session tokens (xoxc/xoxd).
+func (ap *ApiProvider) IsSessionToken() bool {
+	return !ap.IsOAuth()
 }
 
 func (ap *ApiProvider) ServerTransport() string {

@@ -113,7 +113,12 @@ func shouldAddTool(name string, enabledTools []string, envVarName string) bool {
 	return false
 }
 
-func NewMCPServer(provider *provider.ApiProvider, logger *zap.Logger, enabledTools []string) *MCPServer {
+func NewMCPServer(registry *provider.Registry, logger *zap.Logger, enabledTools []string) *MCPServer {
+	// Tools are registered when at least one account can serve them; the
+	// handler then rejects a call for an account that cannot (see accountMiddleware).
+	hasUserToken := registry.Any(func(p *provider.ApiProvider) bool { return !p.IsBotToken() })
+	hasSessionToken := registry.Any(func(p *provider.ApiProvider) bool { return !p.IsBotToken() && !p.IsOAuth() })
+
 	s := server.NewMCPServer(
 		"Slack MCP Server",
 		version.Version,
@@ -121,13 +126,14 @@ func NewMCPServer(provider *provider.ApiProvider, logger *zap.Logger, enabledToo
 		server.WithRecovery(),
 		server.WithToolHandlerMiddleware(buildErrorRecoveryMiddleware(logger)),
 		server.WithToolHandlerMiddleware(buildLoggerMiddleware(logger)),
-		server.WithToolHandlerMiddleware(auth.BuildMiddleware(provider.ServerTransport(), logger)),
+		server.WithToolHandlerMiddleware(auth.BuildMiddleware(registry.ServerTransport(), logger)),
+		server.WithToolHandlerMiddleware(accountMiddleware(registry)),
 	)
 
-	conversationsHandler := handler.NewConversationsHandler(provider, logger)
+	conversationsHandler := handler.NewConversationsHandler(registry, logger)
 
 	if shouldAddTool(ToolConversationsHistory, enabledTools, "") {
-		s.AddTool(mcp.NewTool(ToolConversationsHistory,
+		addTool(s, registry, mcp.NewTool(ToolConversationsHistory,
 			mcp.WithDescription("Get messages from the channel (or DM) by channel_id, the last row/column in the response is used as 'cursor' parameter for pagination if not empty"),
 			mcp.WithTitleAnnotation("Get Conversation History"),
 			mcp.WithReadOnlyHintAnnotation(true),
@@ -150,7 +156,7 @@ func NewMCPServer(provider *provider.ApiProvider, logger *zap.Logger, enabledToo
 	}
 
 	if shouldAddTool(ToolConversationsReplies, enabledTools, "") {
-		s.AddTool(mcp.NewTool(ToolConversationsReplies,
+		addTool(s, registry, mcp.NewTool(ToolConversationsReplies,
 			mcp.WithDescription("Get a thread of messages posted to a conversation by channelID and thread_ts, the last row/column in the response is used as 'cursor' parameter for pagination if not empty"),
 			mcp.WithTitleAnnotation("Get Thread Replies"),
 			mcp.WithReadOnlyHintAnnotation(true),
@@ -177,7 +183,7 @@ func NewMCPServer(provider *provider.ApiProvider, logger *zap.Logger, enabledToo
 	}
 
 	if shouldAddTool(ToolConversationsAddMessage, enabledTools, "SLACK_MCP_ADD_MESSAGE_TOOL") {
-		s.AddTool(mcp.NewTool(ToolConversationsAddMessage,
+		addTool(s, registry, mcp.NewTool(ToolConversationsAddMessage,
 			mcp.WithDescription("Add a message to a public channel, private channel, or direct message (DM, or IM) conversation by channel_id and thread_ts."),
 			mcp.WithTitleAnnotation("Send Message"),
 			mcp.WithDestructiveHintAnnotation(true),
@@ -202,7 +208,7 @@ func NewMCPServer(provider *provider.ApiProvider, logger *zap.Logger, enabledToo
 	}
 
 	if shouldAddTool(ToolReactionsAdd, enabledTools, "SLACK_MCP_REACTION_TOOL") {
-		s.AddTool(mcp.NewTool(ToolReactionsAdd,
+		addTool(s, registry, mcp.NewTool(ToolReactionsAdd,
 			mcp.WithDescription("Add an emoji reaction to a message in a public channel, private channel, or direct message (DM, or IM) conversation."),
 			mcp.WithDestructiveHintAnnotation(true),
 			mcp.WithString("channel_id",
@@ -221,7 +227,7 @@ func NewMCPServer(provider *provider.ApiProvider, logger *zap.Logger, enabledToo
 	}
 
 	if shouldAddTool(ToolReactionsRemove, enabledTools, "SLACK_MCP_REACTION_TOOL") {
-		s.AddTool(mcp.NewTool(ToolReactionsRemove,
+		addTool(s, registry, mcp.NewTool(ToolReactionsRemove,
 			mcp.WithDescription("Remove an emoji reaction from a message in a public channel, private channel, or direct message (DM, or IM) conversation."),
 			mcp.WithDestructiveHintAnnotation(true),
 			mcp.WithString("channel_id",
@@ -240,7 +246,7 @@ func NewMCPServer(provider *provider.ApiProvider, logger *zap.Logger, enabledToo
 	}
 
 	if shouldAddTool(ToolAttachmentGetData, enabledTools, "SLACK_MCP_ATTACHMENT_TOOL") {
-		s.AddTool(mcp.NewTool(ToolAttachmentGetData,
+		addTool(s, registry, mcp.NewTool(ToolAttachmentGetData,
 			mcp.WithDescription("Download an attachment's content by file ID. Returns file metadata and content (text files as-is, binary files as base64). Maximum file size is 5MB."),
 			mcp.WithTitleAnnotation("Get Attachment Data"),
 			mcp.WithReadOnlyHintAnnotation(true),
@@ -295,12 +301,12 @@ func NewMCPServer(provider *provider.ApiProvider, logger *zap.Logger, enabledToo
 		),
 	)
 	// Only register search tool for non-bot tokens (bot tokens cannot use search.messages API)
-	if !provider.IsBotToken() && shouldAddTool(ToolConversationsSearchMessages, enabledTools, "") {
+	if hasUserToken && shouldAddTool(ToolConversationsSearchMessages, enabledTools, "") {
 		s.AddTool(conversationsSearchTool, conversationsHandler.ConversationsSearchHandler)
 	}
 
 	if shouldAddTool(ToolUsersSearch, enabledTools, "") {
-		s.AddTool(mcp.NewTool(ToolUsersSearch,
+		addTool(s, registry, mcp.NewTool(ToolUsersSearch,
 			mcp.WithDescription("Search for users by name, email, display name, or Slack user ID. If a Slack user ID is provided (e.g. U07VCEPP4N5), the user is looked up directly. Returns user details and DM channel ID if available."),
 			mcp.WithTitleAnnotation("Search Users"),
 			mcp.WithReadOnlyHintAnnotation(true),
@@ -317,8 +323,8 @@ func NewMCPServer(provider *provider.ApiProvider, logger *zap.Logger, enabledToo
 
 	// Register unreads tool - gets all unread messages across channels efficiently.
 	// Bot tokens (xoxb) don't support unread tracking, so exclude them (same pattern as search tool).
-	if !provider.IsBotToken() && shouldAddTool(ToolConversationsUnreads, enabledTools, "") {
-		s.AddTool(mcp.NewTool(ToolConversationsUnreads,
+	if hasUserToken && shouldAddTool(ToolConversationsUnreads, enabledTools, "") {
+		addTool(s, registry, mcp.NewTool(ToolConversationsUnreads,
 			mcp.WithDescription("Get unread messages across all channels. With browser session tokens (xoxc/xoxd), uses a single API call for complete results. With OAuth user tokens (xoxp), scans a subset of channels per type (limited by max_channels) — results may be partial on large workspaces. Results are prioritized: DMs > group DMs > partner channels > internal channels."),
 			mcp.WithTitleAnnotation("Get Unread Messages"),
 			mcp.WithReadOnlyHintAnnotation(true),
@@ -351,7 +357,7 @@ func NewMCPServer(provider *provider.ApiProvider, logger *zap.Logger, enabledToo
 
 	// Register mark tool - marks a channel as read
 	if shouldAddTool(ToolConversationsMark, enabledTools, "") {
-		s.AddTool(mcp.NewTool(ToolConversationsMark,
+		addTool(s, registry, mcp.NewTool(ToolConversationsMark,
 			mcp.WithDescription("Mark a channel or DM as read. If no timestamp is provided, marks all messages as read."),
 			mcp.WithTitleAnnotation("Mark as Read"),
 			mcp.WithDestructiveHintAnnotation(false),
@@ -366,7 +372,7 @@ func NewMCPServer(provider *provider.ApiProvider, logger *zap.Logger, enabledToo
 	}
 
 	if shouldAddTool(ToolConversationsLeave, enabledTools, "") {
-		s.AddTool(mcp.NewTool(ToolConversationsLeave,
+		addTool(s, registry, mcp.NewTool(ToolConversationsLeave,
 			mcp.WithDescription("Leave a channel, group conversation, or DM. Cannot leave the #general channel."),
 			mcp.WithTitleAnnotation("Leave Channel"),
 			mcp.WithDestructiveHintAnnotation(true),
@@ -378,7 +384,7 @@ func NewMCPServer(provider *provider.ApiProvider, logger *zap.Logger, enabledToo
 	}
 
 	if shouldAddTool(ToolConversationsJoin, enabledTools, "") {
-		s.AddTool(mcp.NewTool(ToolConversationsJoin,
+		addTool(s, registry, mcp.NewTool(ToolConversationsJoin,
 			mcp.WithDescription("Join a public channel. Use channels_list or channels_me to find channel IDs."),
 			mcp.WithTitleAnnotation("Join Channel"),
 			mcp.WithIdempotentHintAnnotation(true),
@@ -388,11 +394,11 @@ func NewMCPServer(provider *provider.ApiProvider, logger *zap.Logger, enabledToo
 			),
 		), conversationsHandler.ConversationsJoinHandler)
 	}
-	channelsHandler := handler.NewChannelsHandler(provider, logger)
-	usergroupsHandler := handler.NewUsergroupsHandler(provider, logger)
+	channelsHandler := handler.NewChannelsHandler(registry, logger)
+	usergroupsHandler := handler.NewUsergroupsHandler(registry, logger)
 
 	if shouldAddTool(ToolChannelsList, enabledTools, "") {
-		s.AddTool(mcp.NewTool(ToolChannelsList,
+		addTool(s, registry, mcp.NewTool(ToolChannelsList,
 			mcp.WithDescription("Get list of channels"),
 			mcp.WithTitleAnnotation("List Channels"),
 			mcp.WithReadOnlyHintAnnotation(true),
@@ -421,7 +427,7 @@ func NewMCPServer(provider *provider.ApiProvider, logger *zap.Logger, enabledToo
 	}
 
 	if shouldAddTool(ToolChannelsMe, enabledTools, "") {
-		s.AddTool(mcp.NewTool(ToolChannelsMe,
+		addTool(s, registry, mcp.NewTool(ToolChannelsMe,
 			mcp.WithDescription("List channels you are a member of. Unlike channels_list which returns all workspace channels, this returns only channels you have joined. Useful on large workspaces where channels_list returns thousands of results."),
 			mcp.WithTitleAnnotation("My Channels"),
 			mcp.WithReadOnlyHintAnnotation(true),
@@ -440,7 +446,7 @@ func NewMCPServer(provider *provider.ApiProvider, logger *zap.Logger, enabledToo
 
 	// User groups tools
 	if shouldAddTool(ToolUsergroupsList, enabledTools, "") {
-		s.AddTool(mcp.NewTool(ToolUsergroupsList,
+		addTool(s, registry, mcp.NewTool(ToolUsergroupsList,
 			mcp.WithDescription("List all user groups (subteams) in the Slack workspace. User groups are mention groups like @engineering or @design that notify all members. Use this to discover available groups, check group membership counts, or find a group's ID before joining/updating it. Returns CSV with columns: id, name, handle, description, user_count, is_external."),
 			mcp.WithTitleAnnotation("List User Groups"),
 			mcp.WithReadOnlyHintAnnotation(true),
@@ -460,7 +466,7 @@ func NewMCPServer(provider *provider.ApiProvider, logger *zap.Logger, enabledToo
 	}
 
 	if shouldAddTool(ToolUsergroupsMe, enabledTools, "") {
-		s.AddTool(mcp.NewTool(ToolUsergroupsMe,
+		addTool(s, registry, mcp.NewTool(ToolUsergroupsMe,
 			mcp.WithDescription("Manage your own user group membership. Use action='list' to see which groups you belong to. Use action='join' with a usergroup_id to add yourself to a group (e.g., to receive @mentions). Use action='leave' with a usergroup_id to remove yourself. This is the easiest way to join/leave groups without needing to know the full member list."),
 			mcp.WithTitleAnnotation("My User Groups"),
 			mcp.WithString("action",
@@ -474,7 +480,7 @@ func NewMCPServer(provider *provider.ApiProvider, logger *zap.Logger, enabledToo
 	}
 
 	if shouldAddTool(ToolUsergroupsCreate, enabledTools, "") {
-		s.AddTool(mcp.NewTool(ToolUsergroupsCreate,
+		addTool(s, registry, mcp.NewTool(ToolUsergroupsCreate,
 			mcp.WithDescription("Create a new user group (mention group) in the Slack workspace. After creation, use usergroups_users_update to add members, or users can join themselves with usergroups_me. The handle becomes the @mention (e.g., handle='engineering' creates @engineering)."),
 			mcp.WithTitleAnnotation("Create User Group"),
 			mcp.WithDestructiveHintAnnotation(true),
@@ -495,7 +501,7 @@ func NewMCPServer(provider *provider.ApiProvider, logger *zap.Logger, enabledToo
 	}
 
 	if shouldAddTool(ToolUsergroupsUpdate, enabledTools, "") {
-		s.AddTool(mcp.NewTool(ToolUsergroupsUpdate,
+		addTool(s, registry, mcp.NewTool(ToolUsergroupsUpdate,
 			mcp.WithDescription("Update a user group's metadata: name, handle (@mention), description, or default channels. Does NOT change members - use usergroups_users_update for that. At least one field must be provided."),
 			mcp.WithTitleAnnotation("Update User Group"),
 			mcp.WithDestructiveHintAnnotation(true),
@@ -519,7 +525,7 @@ func NewMCPServer(provider *provider.ApiProvider, logger *zap.Logger, enabledToo
 	}
 
 	if shouldAddTool(ToolUsergroupsUsersUpdate, enabledTools, "") {
-		s.AddTool(mcp.NewTool(ToolUsergroupsUsersUpdate,
+		addTool(s, registry, mcp.NewTool(ToolUsergroupsUsersUpdate,
 			mcp.WithDescription("Replace all members of a user group with a new list. WARNING: This completely replaces the member list - any user not in the 'users' parameter will be removed. To add/remove just yourself, use usergroups_me instead. To add a single user without removing others, first get current members from usergroups_list with include_users=true, then call this with the combined list."),
 			mcp.WithTitleAnnotation("Update User Group Members"),
 			mcp.WithDestructiveHintAnnotation(true),
@@ -536,9 +542,9 @@ func NewMCPServer(provider *provider.ApiProvider, logger *zap.Logger, enabledToo
 
 	// Register saved items tools — "Save for Later" panel management.
 	// Requires browser session tokens (xoxc/xoxd); not available for bot or OAuth tokens.
-	if !provider.IsBotToken() && !provider.IsOAuth() && shouldAddTool(ToolSavedList, enabledTools, "") {
-		savedHandler := handler.NewSavedHandler(provider, logger, conversationsHandler)
-		s.AddTool(mcp.NewTool(ToolSavedList,
+	if hasSessionToken && shouldAddTool(ToolSavedList, enabledTools, "") {
+		savedHandler := handler.NewSavedHandler(registry, logger, conversationsHandler)
+		addTool(s, registry, mcp.NewTool(ToolSavedList,
 			mcp.WithDescription("List saved items from Slack's 'Save for Later' panel. Returns items the user has saved, with optional message content. Replaces the deprecated stars.list API. Requires browser session tokens (xoxc/xoxd)."),
 			mcp.WithTitleAnnotation("List Saved Items"),
 			mcp.WithReadOnlyHintAnnotation(true),
@@ -561,7 +567,7 @@ func NewMCPServer(provider *provider.ApiProvider, logger *zap.Logger, enabledToo
 		), savedHandler.SavedListHandler)
 
 		if shouldAddTool(ToolSavedUpdate, enabledTools, "") {
-			s.AddTool(mcp.NewTool(ToolSavedUpdate,
+			addTool(s, registry, mcp.NewTool(ToolSavedUpdate,
 				mcp.WithDescription("Update a saved item: mark as completed, set a due date, or both. Use item_id and ts values from saved_list output. Replaces the deprecated stars.add/stars.remove APIs."),
 				mcp.WithTitleAnnotation("Update Saved Item"),
 				mcp.WithDestructiveHintAnnotation(true),
@@ -583,7 +589,7 @@ func NewMCPServer(provider *provider.ApiProvider, logger *zap.Logger, enabledToo
 		}
 
 		if shouldAddTool(ToolSavedClearCompleted, enabledTools, "") {
-			s.AddTool(mcp.NewTool(ToolSavedClearCompleted,
+			addTool(s, registry, mcp.NewTool(ToolSavedClearCompleted,
 				mcp.WithDescription("Clear all completed saved items from the 'Save for Later' panel. This is a bulk operation that removes all items with state='completed'."),
 				mcp.WithTitleAnnotation("Clear Completed Saved Items"),
 				mcp.WithDestructiveHintAnnotation(true),
@@ -591,47 +597,11 @@ func NewMCPServer(provider *provider.ApiProvider, logger *zap.Logger, enabledToo
 		}
 	}
 
-	logger.Info("Authenticating with Slack API...",
-		zap.String("context", "console"),
-	)
-	ar, err := provider.Slack().AuthTest()
-	if err != nil {
-		logger.Fatal("Failed to authenticate with Slack",
-			zap.String("context", "console"),
-			zap.Error(err),
-		)
+	registerExtendedTools(s, registry, enabledTools, conversationsHandler, handler.NewCanvasesHandler(registry, conversationsHandler, logger))
+
+	for _, ap := range registry.All() {
+		addAccountResources(s, ap, logger, channelsHandler, conversationsHandler)
 	}
-
-	logger.Info("Successfully authenticated with Slack",
-		zap.String("context", "console"),
-		zap.String("team", ar.Team),
-		zap.String("user", ar.User),
-		zap.String("enterprise", ar.EnterpriseID),
-		zap.String("url", ar.URL),
-	)
-
-	ws, err := text.Workspace(ar.URL)
-	if err != nil {
-		logger.Fatal("Failed to parse workspace from URL",
-			zap.String("context", "console"),
-			zap.String("url", ar.URL),
-			zap.Error(err),
-		)
-	}
-
-	s.AddResource(mcp.NewResource(
-		"slack://"+ws+"/channels",
-		"Directory of Slack channels",
-		mcp.WithResourceDescription("This resource provides a directory of Slack channels."),
-		mcp.WithMIMEType("text/csv"),
-	), channelsHandler.ChannelsResource)
-
-	s.AddResource(mcp.NewResource(
-		"slack://"+ws+"/users",
-		"Directory of Slack users",
-		mcp.WithResourceDescription("This resource provides a directory of Slack users."),
-		mcp.WithMIMEType("text/csv"),
-	), conversationsHandler.UsersResource)
 
 	return &MCPServer{
 		server: s,
@@ -729,4 +699,54 @@ func buildLoggerMiddleware(logger *zap.Logger) server.ToolHandlerMiddleware {
 			return res, err
 		}
 	}
+}
+
+// addAccountResources registers the channel and user directories of one account.
+func addAccountResources(s *server.MCPServer, ap *provider.ApiProvider, logger *zap.Logger, channelsHandler *handler.ChannelsHandler, conversationsHandler *handler.ConversationsHandler) {
+	ar, err := ap.Slack().AuthTest()
+	if err != nil {
+		logger.Fatal("Failed to authenticate with Slack",
+			zap.String("context", "console"),
+			zap.String("account", ap.Name()),
+			zap.Error(err),
+		)
+	}
+
+	logger.Info("Successfully authenticated with Slack",
+		zap.String("context", "console"),
+		zap.String("account", ap.Name()),
+		zap.String("team", ar.Team),
+		zap.String("user", ar.User),
+		zap.String("enterprise", ar.EnterpriseID),
+		zap.String("url", ar.URL),
+	)
+
+	ws, err := text.Workspace(ar.URL)
+	if err != nil {
+		logger.Fatal("Failed to parse workspace from URL",
+			zap.String("context", "console"),
+			zap.String("url", ar.URL),
+			zap.Error(err),
+		)
+	}
+
+	bind := func(h server.ResourceHandlerFunc) server.ResourceHandlerFunc {
+		return func(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+			return h(provider.WithAccount(ctx, ap), req)
+		}
+	}
+
+	s.AddResource(mcp.NewResource(
+		"slack://"+ws+"/channels",
+		"Directory of Slack channels ("+ap.Name()+")",
+		mcp.WithResourceDescription("This resource provides a directory of Slack channels for account "+ap.Name()+"."),
+		mcp.WithMIMEType("text/csv"),
+	), bind(channelsHandler.ChannelsResource))
+
+	s.AddResource(mcp.NewResource(
+		"slack://"+ws+"/users",
+		"Directory of Slack users ("+ap.Name()+")",
+		mcp.WithResourceDescription("This resource provides a directory of Slack users for account "+ap.Name()+"."),
+		mcp.WithMIMEType("text/csv"),
+	), bind(conversationsHandler.UsersResource))
 }

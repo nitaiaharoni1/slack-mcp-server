@@ -24,13 +24,18 @@ type SavedItemRow struct {
 }
 
 type SavedHandler struct {
-	apiProvider *provider.ApiProvider
+	registry    *provider.Registry
 	logger      *zap.Logger
 	convHandler *ConversationsHandler
 }
 
-func NewSavedHandler(apiProvider *provider.ApiProvider, logger *zap.Logger, convHandler *ConversationsHandler) *SavedHandler {
-	return &SavedHandler{apiProvider: apiProvider, logger: logger, convHandler: convHandler}
+// ap returns the Slack account resolved for this tool call.
+func (h *SavedHandler) ap(ctx context.Context) *provider.ApiProvider {
+	return h.registry.FromContext(ctx)
+}
+
+func NewSavedHandler(registry *provider.Registry, logger *zap.Logger, convHandler *ConversationsHandler) *SavedHandler {
+	return &SavedHandler{registry: registry, logger: logger, convHandler: convHandler}
 }
 
 func (h *SavedHandler) SavedListHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
@@ -41,7 +46,7 @@ func (h *SavedHandler) SavedListHandler(ctx context.Context, request mcp.CallToo
 	includeMessages := request.GetBool("include_messages", true)
 	maxMsgsPerItem := request.GetInt("max_messages_per_item", 5)
 
-	channelsMaps := h.apiProvider.ProvideChannelsMaps()
+	channelsMaps := h.ap(ctx).ProvideChannelsMaps()
 	rl := limiter.Tier3.Limiter()
 
 	var allItems []SavedItemRow
@@ -61,7 +66,7 @@ func (h *SavedHandler) SavedListHandler(ctx context.Context, request mcp.CallToo
 			}
 		}
 
-		resp, err := h.apiProvider.Slack().SavedList(ctx, filter, pageSize, cursor)
+		resp, err := h.ap(ctx).Slack().SavedList(ctx, filter, pageSize, cursor)
 		if err != nil {
 			h.logger.Error("SavedList failed", zap.Error(err))
 			return nil, fmt.Errorf("failed to list saved items: %v", err)
@@ -100,7 +105,7 @@ func (h *SavedHandler) SavedListHandler(ctx context.Context, request mcp.CallToo
 					Inclusive: true,
 					Limit:     1,
 				}
-				histResp, err := h.apiProvider.Slack().GetConversationHistoryContext(ctx, histParams)
+				histResp, err := h.ap(ctx).Slack().GetConversationHistoryContext(ctx, histParams)
 				if err != nil {
 					h.logger.Warn("Failed to fetch saved message via history, trying replies",
 						zap.String("channel", item.ItemID),
@@ -125,7 +130,7 @@ func (h *SavedHandler) SavedListHandler(ctx context.Context, request mcp.CallToo
 							Inclusive: true,
 							Limit:     maxMsgsPerItem,
 						}
-						replies, _, _, err := h.apiProvider.Slack().GetConversationRepliesContext(ctx, repliesParams)
+						replies, _, _, err := h.ap(ctx).Slack().GetConversationRepliesContext(ctx, repliesParams)
 						if err == nil && len(replies) > 0 {
 							msgs := h.convHandler.convertMessagesFromHistory(ctx, replies, item.ItemID, false)
 							allMessages = append(allMessages, msgs...)
@@ -143,7 +148,7 @@ func (h *SavedHandler) SavedListHandler(ctx context.Context, request mcp.CallToo
 						Inclusive: true,
 						Limit:     maxMsgsPerItem,
 					}
-					replies, _, _, err := h.apiProvider.Slack().GetConversationRepliesContext(ctx, repliesParams)
+					replies, _, _, err := h.ap(ctx).Slack().GetConversationRepliesContext(ctx, repliesParams)
 					if err == nil && len(replies) > 0 {
 						msgs := h.convHandler.convertMessagesFromHistory(ctx, replies, item.ItemID, false)
 						allMessages = append(allMessages, msgs...)
@@ -191,7 +196,7 @@ func (h *SavedHandler) SavedUpdateHandler(ctx context.Context, request mcp.CallT
 		return nil, fmt.Errorf("at least one of mark or date_due must be provided")
 	}
 
-	err := h.apiProvider.Slack().SavedUpdate(ctx, "message", itemID, ts, mark, dateDue)
+	err := h.ap(ctx).Slack().SavedUpdate(ctx, "message", itemID, ts, mark, dateDue)
 	if err != nil {
 		h.logger.Error("SavedUpdate failed",
 			zap.String("item_id", itemID),
@@ -217,7 +222,7 @@ func (h *SavedHandler) SavedUpdateHandler(ctx context.Context, request mcp.CallT
 func (h *SavedHandler) SavedClearCompletedHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	h.logger.Debug("SavedClearCompletedHandler called", zap.Any("params", request.Params))
 
-	err := h.apiProvider.Slack().SavedClearCompleted(ctx)
+	err := h.ap(ctx).Slack().SavedClearCompleted(ctx)
 	if err != nil {
 		h.logger.Error("SavedClearCompleted failed", zap.Error(err))
 		return nil, fmt.Errorf("failed to clear completed saved items: %v", err)
