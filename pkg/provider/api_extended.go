@@ -30,6 +30,21 @@ type ExtendedSlackAPI interface {
 	EditCanvasContext(ctx context.Context, params slack.EditCanvasParams) error
 	DeleteCanvasContext(ctx context.Context, canvasID string) error
 	LookupCanvasSectionsContext(ctx context.Context, params slack.LookupCanvasSectionsParams) ([]slack.CanvasSection, error)
+	CreateConversationContext(ctx context.Context, params slack.CreateConversationParams) (*slack.Channel, error)
+	OpenConversationContext(ctx context.Context, params *slack.OpenConversationParameters) (*slack.Channel, bool, bool, error)
+	InviteUsersToConversationContext(ctx context.Context, channelID string, users ...string) (*slack.Channel, error)
+	SetTopicOfConversationContext(ctx context.Context, channelID, topic string) (*slack.Channel, error)
+	SetPurposeOfConversationContext(ctx context.Context, channelID, purpose string) (*slack.Channel, error)
+	GetUsersInConversationContext(ctx context.Context, params *slack.GetUsersInConversationParameters) ([]string, string, error)
+	GetReactionsContext(ctx context.Context, item slack.ItemRef, params slack.GetReactionsParameters) (slack.ReactedItem, error)
+	GetEmojiContext(ctx context.Context) (map[string]string, error)
+	AddPinContext(ctx context.Context, channel string, item slack.ItemRef) error
+	RemovePinContext(ctx context.Context, channel string, item slack.ItemRef) error
+	ListPinsContext(ctx context.Context, channel string) ([]slack.Item, *slack.Paging, error)
+	AddUserReminderContext(ctx context.Context, userID, text, time string) (*slack.Reminder, error)
+	ListRemindersContext(ctx context.Context) ([]*slack.Reminder, error)
+	DeleteReminderContext(ctx context.Context, id string) error
+	SetUserCustomStatusContext(ctx context.Context, statusText, statusEmoji string, statusExpiration int64) error
 	APICall(ctx context.Context, method string, body any, out any) error
 }
 
@@ -83,6 +98,66 @@ func (c *MCPSlackClient) DeleteCanvasContext(ctx context.Context, canvasID strin
 
 func (c *MCPSlackClient) LookupCanvasSectionsContext(ctx context.Context, params slack.LookupCanvasSectionsParams) ([]slack.CanvasSection, error) {
 	return c.slackClient.LookupCanvasSectionsContext(ctx, params)
+}
+
+func (c *MCPSlackClient) CreateConversationContext(ctx context.Context, params slack.CreateConversationParams) (*slack.Channel, error) {
+	return c.slackClient.CreateConversationContext(ctx, params)
+}
+
+func (c *MCPSlackClient) OpenConversationContext(ctx context.Context, params *slack.OpenConversationParameters) (*slack.Channel, bool, bool, error) {
+	return c.slackClient.OpenConversationContext(ctx, params)
+}
+
+func (c *MCPSlackClient) InviteUsersToConversationContext(ctx context.Context, channelID string, users ...string) (*slack.Channel, error) {
+	return c.slackClient.InviteUsersToConversationContext(ctx, channelID, users...)
+}
+
+func (c *MCPSlackClient) SetTopicOfConversationContext(ctx context.Context, channelID, topic string) (*slack.Channel, error) {
+	return c.slackClient.SetTopicOfConversationContext(ctx, channelID, topic)
+}
+
+func (c *MCPSlackClient) SetPurposeOfConversationContext(ctx context.Context, channelID, purpose string) (*slack.Channel, error) {
+	return c.slackClient.SetPurposeOfConversationContext(ctx, channelID, purpose)
+}
+
+func (c *MCPSlackClient) GetUsersInConversationContext(ctx context.Context, params *slack.GetUsersInConversationParameters) ([]string, string, error) {
+	return c.slackClient.GetUsersInConversationContext(ctx, params)
+}
+
+func (c *MCPSlackClient) GetReactionsContext(ctx context.Context, item slack.ItemRef, params slack.GetReactionsParameters) (slack.ReactedItem, error) {
+	return c.slackClient.GetReactionsContext(ctx, item, params)
+}
+
+func (c *MCPSlackClient) GetEmojiContext(ctx context.Context) (map[string]string, error) {
+	return c.slackClient.GetEmojiContext(ctx)
+}
+
+func (c *MCPSlackClient) AddPinContext(ctx context.Context, channel string, item slack.ItemRef) error {
+	return c.slackClient.AddPinContext(ctx, channel, item)
+}
+
+func (c *MCPSlackClient) RemovePinContext(ctx context.Context, channel string, item slack.ItemRef) error {
+	return c.slackClient.RemovePinContext(ctx, channel, item)
+}
+
+func (c *MCPSlackClient) ListPinsContext(ctx context.Context, channel string) ([]slack.Item, *slack.Paging, error) {
+	return c.slackClient.ListPinsContext(ctx, channel)
+}
+
+func (c *MCPSlackClient) AddUserReminderContext(ctx context.Context, userID, text, time string) (*slack.Reminder, error) {
+	return c.slackClient.AddUserReminderContext(ctx, userID, text, time)
+}
+
+func (c *MCPSlackClient) ListRemindersContext(ctx context.Context) ([]*slack.Reminder, error) {
+	return c.slackClient.ListRemindersContext(ctx)
+}
+
+func (c *MCPSlackClient) DeleteReminderContext(ctx context.Context, id string) error {
+	return c.slackClient.DeleteReminderContext(ctx, id)
+}
+
+func (c *MCPSlackClient) SetUserCustomStatusContext(ctx context.Context, statusText, statusEmoji string, statusExpiration int64) error {
+	return c.slackClient.SetUserCustomStatusContext(ctx, statusText, statusEmoji, statusExpiration)
 }
 
 // APICall posts body as JSON to a Web API method on the account's own

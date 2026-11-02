@@ -305,19 +305,9 @@ func (ch *ConversationsHandler) FilesUploadHandler(ctx context.Context, request 
 func (ch *ConversationsHandler) UsersInfoHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	ch.logger.Debug("UsersInfoHandler called", zap.Any("params", request.Params))
 
-	userID := strings.TrimPrefix(request.GetString("user_id", ""), "@")
-	if userID == "" {
-		return nil, errors.New("user_id is required")
-	}
-	if !isSlackUserIDPrefix(userID) {
-		users, err := ch.ap(ctx).SearchUsers(ctx, userID, 1)
-		if err != nil {
-			return nil, err
-		}
-		if len(users) == 0 {
-			return nil, fmt.Errorf("user %q not found", userID)
-		}
-		userID = users[0].ID
+	userID, err := ch.resolveUserID(ctx, request.GetString("user_id", ""))
+	if err != nil {
+		return nil, err
 	}
 
 	user, err := ch.ap(ctx).Slack().GetUserInfoContext(ctx, userID)

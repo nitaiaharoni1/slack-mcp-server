@@ -290,6 +290,29 @@ func (h *CanvasesHandler) ListsCreateHandler(ctx context.Context, request mcp.Ca
 	return h.listsCall(ctx, "slackLists.create", body)
 }
 
+// ListsUpdateHandler renames a List or changes its todo mode (slackLists.update).
+func (h *CanvasesHandler) ListsUpdateHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	h.logger.Debug("ListsUpdateHandler called", zap.Any("params", request.Params))
+	if err := requireWrites("SLACK_MCP_LISTS_TOOL", "lists_update"); err != nil {
+		return nil, err
+	}
+	listID, err := requireListID(request)
+	if err != nil {
+		return nil, err
+	}
+	body := map[string]any{"id": listID}
+	if name := request.GetString("name", ""); name != "" {
+		body["name"] = name
+	}
+	if _, ok := request.GetArguments()["todo_mode"]; ok {
+		body["todo_mode"] = request.GetBool("todo_mode", false)
+	}
+	if len(body) == 1 {
+		return nil, errors.New("pass name and/or todo_mode")
+	}
+	return h.listsCall(ctx, "slackLists.update", body)
+}
+
 // ListsItemsListHandler lists a List's items (slackLists.items.list).
 func (h *CanvasesHandler) ListsItemsListHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	h.logger.Debug("ListsItemsListHandler called", zap.Any("params", request.Params))

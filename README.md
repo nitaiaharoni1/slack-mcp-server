@@ -27,9 +27,10 @@ This fork of [korotovsky/slack-mcp-server](https://github.com/korotovsky/slack-m
 
 - **Multiple accounts in one server.** Every tool takes an optional `account` argument; `list_accounts` shows each account's workspace, user and token type. Each account has its own client, caches and rate limiter.
 - **Messages:** `messages_update`, `messages_delete`, `messages_schedule`, `messages_scheduled_list`, `messages_scheduled_delete`, `messages_permalink`. Writes follow the `SLACK_MCP_ADD_MESSAGE_TOOL` channel policy.
-- **Files and people:** `files_upload` (up to 5 MB, same policy), `users_info` (full profile with custom fields).
+- **Files and people:** `files_upload` (up to 5 MB, same policy), `users_info` (full profile with custom fields), `users_set_status`, `reminders` (list, add, delete), `emoji_search`.
+- **Channels:** `conversations_create` (channel, DM or group DM), `conversations_info`, `conversations_members`, `conversations_invite`, `conversations_set_topic` (topic and purpose), `pins` (list, add, remove), `reactions_get`.
 - **Canvases:** `canvases_create` (standalone or a channel's canvas), `canvases_read`, `canvases_edit`, `canvases_sections_lookup`, `canvases_delete`. Writes need `SLACK_MCP_CANVAS_TOOL=true`.
-- **Lists:** `lists_create`, `lists_items_list`, `lists_item_get`, `lists_items_create`, `lists_items_update`, `lists_items_delete`. Writes need `SLACK_MCP_LISTS_TOOL=true`.
+- **Lists:** `lists_create`, `lists_update`, `lists_items_list`, `lists_item_get`, `lists_items_create`, `lists_items_update`, `lists_items_delete`. Writes need `SLACK_MCP_LISTS_TOOL=true`.
 
 Messages sent with a user token (`xoxp`) are posted as you, with no "Sent using" app label.
 
@@ -41,6 +42,12 @@ SLACK_MCP_DEFAULT_ACCOUNT=vistral              # optional; defaults to the first
 SLACK_MCP_VISTRAL_XOXP_TOKEN=xoxp-...          # per account: _XOXP_TOKEN, _XOXB_TOKEN, or _XOXC_TOKEN + _XOXD_TOKEN
 SLACK_MCP_LIGHTHOUSE_XOXP_TOKEN=xoxp-...
 ```
+
+Guards against mixing up workspaces, active when more than one account is configured:
+
+- Tools that change Slack require `account`; they never fall back to the default. Read tools default to `SLACK_MCP_DEFAULT_ACCOUNT`.
+- Every result starts with a line naming the account, workspace and user it came from.
+- A `channel_id` that only another account's cache knows, or a Slack link on another account's workspace, is refused with the account to use instead.
 
 Without `SLACK_MCP_ACCOUNTS` the server reads the upstream single-account variables (`SLACK_MCP_XOXP_TOKEN`, ...) as account `default`.
 

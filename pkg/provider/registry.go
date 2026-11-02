@@ -236,3 +236,9 @@ func (r *Registry) FromContext(ctx context.Context) *ApiProvider {
 	}
 	return r.Default()
 }
+
+// HasChannel reports whether the account's channel cache knows this channel ID.
+func (ap *ApiProvider) HasChannel(id string) bool {
+	_, ok := ap.ProvideChannelsMaps().Channels[id]
+	return ok
+}

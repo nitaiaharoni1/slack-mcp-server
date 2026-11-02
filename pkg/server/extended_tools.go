@@ -33,6 +33,17 @@ const (
 	ToolListsItemsCreate        = "lists_items_create"
 	ToolListsItemsUpdate        = "lists_items_update"
 	ToolListsItemsDelete        = "lists_items_delete"
+	ToolListsUpdate             = "lists_update"
+	ToolConversationsCreate     = "conversations_create"
+	ToolConversationsInfo       = "conversations_info"
+	ToolConversationsMembers    = "conversations_members"
+	ToolConversationsInvite     = "conversations_invite"
+	ToolConversationsSetTopic   = "conversations_set_topic"
+	ToolReactionsGet            = "reactions_get"
+	ToolEmojiSearch             = "emoji_search"
+	ToolPins                    = "pins"
+	ToolReminders               = "reminders"
+	ToolUsersSetStatus          = "users_set_status"
 )
 
 func init() {
@@ -246,6 +257,102 @@ func registerExtendedTools(s *server.MCPServer, registry *provider.Registry, ena
 		mcp.WithString("list_id", mcp.Required(), mcp.Description("List ID (Fxxxxxxxxxx).")),
 		mcp.WithString("item_ids", mcp.Required(), mcp.Description("Comma-separated item IDs.")),
 	), canvases.ListsItemsDeleteHandler)
+
+	add(ToolListsUpdate, "SLACK_MCP_LISTS_TOOL", mcp.NewTool(ToolListsUpdate,
+		mcp.WithDescription("Rename a Slack List or turn its todo mode on or off (slackLists.update)."),
+		mcp.WithTitleAnnotation("Update List"),
+		mcp.WithDestructiveHintAnnotation(true),
+		mcp.WithString("list_id", mcp.Required(), mcp.Description("List ID (Fxxxxxxxxxx).")),
+		mcp.WithString("name", mcp.Description("New name.")),
+		mcp.WithBoolean("todo_mode", mcp.Description("Turn the completed / assignee / due date columns on or off.")),
+	), canvases.ListsUpdateHandler)
+
+	// Channels and people
+	add(ToolConversationsCreate, "SLACK_MCP_ADD_MESSAGE_TOOL", mcp.NewTool(ToolConversationsCreate,
+		mcp.WithDescription("Create a channel (name), or open a DM or group DM with users and get its channel ID (users)."),
+		mcp.WithTitleAnnotation("Create Channel or DM"),
+		mcp.WithDestructiveHintAnnotation(true),
+		mcp.WithString("name", mcp.Description("New channel name: lowercase, no spaces, up to 80 characters.")),
+		mcp.WithBoolean("is_private", mcp.Description("Create the channel as private.")),
+		mcp.WithString("users", mcp.Description("Comma-separated user IDs, @handles, names or emails, for a DM (one) or group DM (up to 8).")),
+	), convs.ConversationsCreateHandler)
+
+	add(ToolConversationsInfo, "", mcp.NewTool(ToolConversationsInfo,
+		mcp.WithDescription("Get a channel's details: name, privacy, topic, purpose, member count, archived."),
+		mcp.WithTitleAnnotation("Get Channel Info"),
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithString("channel_id", mcp.Required(), mcp.Description(channelArgDescription)),
+	), convs.ConversationsInfoHandler)
+
+	add(ToolConversationsMembers, "", mcp.NewTool(ToolConversationsMembers,
+		mcp.WithDescription("List a channel's members with their names."),
+		mcp.WithTitleAnnotation("List Channel Members"),
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithString("channel_id", mcp.Required(), mcp.Description(channelArgDescription)),
+		mcp.WithNumber("limit", mcp.DefaultNumber(200), mcp.Description("Maximum members per page.")),
+		mcp.WithString("cursor", mcp.Description("next_cursor from the previous page.")),
+	), convs.ConversationsMembersHandler)
+
+	add(ToolConversationsInvite, "SLACK_MCP_ADD_MESSAGE_TOOL", mcp.NewTool(ToolConversationsInvite,
+		mcp.WithDescription("Add users to a channel."),
+		mcp.WithTitleAnnotation("Add People to Channel"),
+		mcp.WithDestructiveHintAnnotation(true),
+		mcp.WithString("channel_id", mcp.Required(), mcp.Description(channelArgDescription)),
+		mcp.WithString("users", mcp.Required(), mcp.Description("Comma-separated user IDs, @handles, names or emails.")),
+	), convs.ConversationsInviteHandler)
+
+	add(ToolConversationsSetTopic, "SLACK_MCP_ADD_MESSAGE_TOOL", mcp.NewTool(ToolConversationsSetTopic,
+		mcp.WithDescription("Set a channel's topic and/or purpose (description). An empty string clears it."),
+		mcp.WithTitleAnnotation("Set Channel Topic"),
+		mcp.WithDestructiveHintAnnotation(true),
+		mcp.WithString("channel_id", mcp.Required(), mcp.Description(channelArgDescription)),
+		mcp.WithString("topic", mcp.Description("New topic.")),
+		mcp.WithString("purpose", mcp.Description("New purpose (the channel description).")),
+	), convs.ConversationsSetTopicHandler)
+
+	add(ToolReactionsGet, "", mcp.NewTool(ToolReactionsGet,
+		mcp.WithDescription("List the reactions on a message and who added each one."),
+		mcp.WithTitleAnnotation("Get Reactions"),
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithString("channel_id", mcp.Required(), mcp.Description(channelArgDescription)),
+		mcp.WithString("timestamp", mcp.Required(), mcp.Description("ts of the message, in format 1234567890.123456.")),
+	), convs.ReactionsGetHandler)
+
+	add(ToolEmojiSearch, "", mcp.NewTool(ToolEmojiSearch,
+		mcp.WithDescription("Search the workspace's custom emoji by name (standard Unicode emoji are always available and not listed)."),
+		mcp.WithTitleAnnotation("Search Emoji"),
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithString("query", mcp.Description("Part of the emoji name; empty lists all.")),
+		mcp.WithNumber("limit", mcp.DefaultNumber(100), mcp.Description("Maximum names returned.")),
+	), convs.EmojiSearchHandler)
+
+	add(ToolPins, "", mcp.NewTool(ToolPins,
+		mcp.WithDescription("List a channel's pinned messages, or pin / unpin a message. Pinning follows the SLACK_MCP_ADD_MESSAGE_TOOL channel policy."),
+		mcp.WithTitleAnnotation("Pins"),
+		mcp.WithDestructiveHintAnnotation(true),
+		mcp.WithString("action", mcp.DefaultString("list"), mcp.Description("list, add or remove.")),
+		mcp.WithString("channel_id", mcp.Required(), mcp.Description(channelArgDescription)),
+		mcp.WithString("timestamp", mcp.Description("ts of the message; required for add and remove.")),
+	), convs.PinsHandler)
+
+	add(ToolReminders, "", mcp.NewTool(ToolReminders,
+		mcp.WithDescription("List, add or delete the account user's own Slack reminders."),
+		mcp.WithTitleAnnotation("Reminders"),
+		mcp.WithDestructiveHintAnnotation(true),
+		mcp.WithString("action", mcp.DefaultString("list"), mcp.Description("list, add or delete.")),
+		mcp.WithString("text", mcp.Description("Reminder text; required for add.")),
+		mcp.WithString("time", mcp.Description(`When; required for add. Unix seconds, or natural language Slack understands, e.g. "in 15 minutes" or "every Thursday at 9am".`)),
+		mcp.WithString("reminder_id", mcp.Description("Required for delete.")),
+	), convs.RemindersHandler)
+
+	add(ToolUsersSetStatus, "SLACK_MCP_ADD_MESSAGE_TOOL", mcp.NewTool(ToolUsersSetStatus,
+		mcp.WithDescription("Set or clear the account user's Slack status. Empty text and emoji clear it."),
+		mcp.WithTitleAnnotation("Set My Status"),
+		mcp.WithDestructiveHintAnnotation(true),
+		mcp.WithString("status_text", mcp.Description("Status text, up to 100 characters.")),
+		mcp.WithString("status_emoji", mcp.Description("Emoji name, e.g. palm_tree or :palm_tree:.")),
+		mcp.WithNumber("expires_in_minutes", mcp.Description("Clear the status after this many minutes; 0 keeps it.")),
+	), convs.StatusSetHandler)
 }
 
 func listAccountsHandler(registry *provider.Registry) server.ToolHandlerFunc {
