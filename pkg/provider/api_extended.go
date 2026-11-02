@@ -43,6 +43,21 @@ type ExtendedSlackAPI interface {
 	ListPinsContext(ctx context.Context, channel string) ([]slack.Item, *slack.Paging, error)
 	AddUserReminderContext(ctx context.Context, userID, text, time string) (*slack.Reminder, error)
 	SetUserCustomStatusContext(ctx context.Context, statusText, statusEmoji string, statusExpiration int64) error
+	GetFilesContext(ctx context.Context, params slack.GetFilesParameters) ([]slack.File, *slack.Paging, error)
+	DeleteFileContext(ctx context.Context, fileID string) error
+	ArchiveConversationContext(ctx context.Context, channelID string) error
+	UnArchiveConversationContext(ctx context.Context, channelID string) error
+	RenameConversationContext(ctx context.Context, channelID, channelName string) (*slack.Channel, error)
+	KickUserFromConversationContext(ctx context.Context, channelID string, user string) error
+	ListBookmarksContext(ctx context.Context, channelID string) ([]slack.Bookmark, error)
+	AddBookmarkContext(ctx context.Context, channelID string, params slack.AddBookmarkParameters) (slack.Bookmark, error)
+	EditBookmarkContext(ctx context.Context, channelID, bookmarkID string, params slack.EditBookmarkParameters) (slack.Bookmark, error)
+	RemoveBookmarkContext(ctx context.Context, channelID, bookmarkID string) error
+	GetUserPresenceContext(ctx context.Context, user string) (*slack.UserPresence, error)
+	SetUserPresenceContext(ctx context.Context, presence string) error
+	GetDNDInfoContext(ctx context.Context, user *string) (*slack.DNDStatus, error)
+	SetSnoozeContext(ctx context.Context, minutes int) (*slack.DNDStatus, error)
+	EndSnoozeContext(ctx context.Context) (*slack.DNDStatus, error)
 	APICall(ctx context.Context, method string, body any, out any) error
 }
 
@@ -150,6 +165,66 @@ func (c *MCPSlackClient) ListPinsContext(ctx context.Context, channel string) ([
 
 func (c *MCPSlackClient) AddUserReminderContext(ctx context.Context, userID, text, time string) (*slack.Reminder, error) {
 	return c.slackClient.AddUserReminderContext(ctx, userID, text, time)
+}
+
+func (c *MCPSlackClient) GetFilesContext(ctx context.Context, params slack.GetFilesParameters) ([]slack.File, *slack.Paging, error) {
+	return c.slackClient.GetFilesContext(ctx, params)
+}
+
+func (c *MCPSlackClient) DeleteFileContext(ctx context.Context, fileID string) error {
+	return c.slackClient.DeleteFileContext(ctx, fileID)
+}
+
+func (c *MCPSlackClient) ArchiveConversationContext(ctx context.Context, channelID string) error {
+	return c.slackClient.ArchiveConversationContext(ctx, channelID)
+}
+
+func (c *MCPSlackClient) UnArchiveConversationContext(ctx context.Context, channelID string) error {
+	return c.slackClient.UnArchiveConversationContext(ctx, channelID)
+}
+
+func (c *MCPSlackClient) RenameConversationContext(ctx context.Context, channelID, channelName string) (*slack.Channel, error) {
+	return c.slackClient.RenameConversationContext(ctx, channelID, channelName)
+}
+
+func (c *MCPSlackClient) KickUserFromConversationContext(ctx context.Context, channelID string, user string) error {
+	return c.slackClient.KickUserFromConversationContext(ctx, channelID, user)
+}
+
+func (c *MCPSlackClient) ListBookmarksContext(ctx context.Context, channelID string) ([]slack.Bookmark, error) {
+	return c.slackClient.ListBookmarksContext(ctx, channelID)
+}
+
+func (c *MCPSlackClient) AddBookmarkContext(ctx context.Context, channelID string, params slack.AddBookmarkParameters) (slack.Bookmark, error) {
+	return c.slackClient.AddBookmarkContext(ctx, channelID, params)
+}
+
+func (c *MCPSlackClient) EditBookmarkContext(ctx context.Context, channelID, bookmarkID string, params slack.EditBookmarkParameters) (slack.Bookmark, error) {
+	return c.slackClient.EditBookmarkContext(ctx, channelID, bookmarkID, params)
+}
+
+func (c *MCPSlackClient) RemoveBookmarkContext(ctx context.Context, channelID, bookmarkID string) error {
+	return c.slackClient.RemoveBookmarkContext(ctx, channelID, bookmarkID)
+}
+
+func (c *MCPSlackClient) GetUserPresenceContext(ctx context.Context, user string) (*slack.UserPresence, error) {
+	return c.slackClient.GetUserPresenceContext(ctx, user)
+}
+
+func (c *MCPSlackClient) SetUserPresenceContext(ctx context.Context, presence string) error {
+	return c.slackClient.SetUserPresenceContext(ctx, presence)
+}
+
+func (c *MCPSlackClient) GetDNDInfoContext(ctx context.Context, user *string) (*slack.DNDStatus, error) {
+	return c.slackClient.GetDNDInfoContext(ctx, user)
+}
+
+func (c *MCPSlackClient) SetSnoozeContext(ctx context.Context, minutes int) (*slack.DNDStatus, error) {
+	return c.slackClient.SetSnoozeContext(ctx, minutes)
+}
+
+func (c *MCPSlackClient) EndSnoozeContext(ctx context.Context) (*slack.DNDStatus, error) {
+	return c.slackClient.EndSnoozeContext(ctx)
 }
 
 func (c *MCPSlackClient) SetUserCustomStatusContext(ctx context.Context, statusText, statusEmoji string, statusExpiration int64) error {

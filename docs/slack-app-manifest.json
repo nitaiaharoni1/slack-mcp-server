@@ -12,7 +12,7 @@
         "im:history", "im:read", "im:write",
         "mpim:history", "mpim:read", "mpim:write",
         "chat:write", "reactions:read", "reactions:write",
-        "search:read", "users:read", "users:read.email",
+        "search:read", "users:read", "users:read.email", "users:write",
         "users.profile:read", "users.profile:write",
         "usergroups:read", "usergroups:write",
         "files:read", "files:write",
@@ -20,6 +20,8 @@
         "lists:read", "lists:write",
         "pins:read", "pins:write",
         "reminders:read", "reminders:write",
+        "bookmarks:read", "bookmarks:write",
+        "dnd:read", "dnd:write",
         "emoji:read"
       ]
     }

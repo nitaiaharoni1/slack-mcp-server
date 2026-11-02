@@ -20,8 +20,8 @@ const AccountArg = "account"
 // hint). With several accounts these must name their account explicitly.
 var writeTools = map[string]bool{}
 
-// actionTools default to a read-only "list" action; only their other actions write.
-var actionTools = map[string]bool{ToolPins: true}
+// actionTools map a tool to its read-only default action; only their other actions write.
+var actionTools = map[string]string{ToolPins: "list", ToolBookmarks: "list", ToolPresence: "get", ToolDND: "info"}
 
 // addTool registers a tool with the shared account argument.
 func addTool(s *server.MCPServer, registry *provider.Registry, tool mcp.Tool, h server.ToolHandlerFunc) {
@@ -38,15 +38,15 @@ func addTool(s *server.MCPServer, registry *provider.Registry, tool mcp.Tool, h 
 	switch {
 	case !registry.IsMulti():
 		desc += " Default: " + registry.DefaultName() + "."
-	case actionTools[tool.Name]:
-		desc += " Default for action=list: " + registry.DefaultName() + ". Required for any other action: it changes Slack."
+	case actionTools[tool.Name] != "":
+		desc += " Default for action=" + actionTools[tool.Name] + ": " + registry.DefaultName() + ". Required for any other action: it changes Slack."
 	case readOnly:
 		desc += " Default: " + registry.DefaultName() + ". IDs (channels, users, messages) belong to one workspace: reuse the account the ID came from."
 	default:
 		desc += " Required for this tool: it changes Slack, so it never falls back to a default account."
 	}
 	tool.InputSchema.Properties[AccountArg] = map[string]any{"type": "string", "description": desc}
-	if !readOnly && registry.IsMulti() && !actionTools[tool.Name] {
+	if !readOnly && registry.IsMulti() && actionTools[tool.Name] == "" {
 		tool.InputSchema.Required = append(tool.InputSchema.Required, AccountArg)
 	}
 	s.AddTool(tool, h)
@@ -56,9 +56,9 @@ func isWriteCall(req mcp.CallToolRequest) bool {
 	if !writeTools[req.Params.Name] {
 		return false
 	}
-	if actionTools[req.Params.Name] {
+	if read := actionTools[req.Params.Name]; read != "" {
 		action := req.GetString("action", "")
-		return action != "" && action != "list"
+		return action != "" && action != read
 	}
 	return true
 }

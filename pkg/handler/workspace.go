@@ -302,6 +302,212 @@ func (ch *ConversationsHandler) PinsHandler(ctx context.Context, request mcp.Cal
 	return mcp.NewToolResultText(fmt.Sprintf("Pin %s: message %s in channel %s", action, ts, channel)), nil
 }
 
+// ConversationsManageHandler archives, unarchives or renames a channel, or
+// removes someone from it.
+func (ch *ConversationsHandler) ConversationsManageHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	ch.logger.Debug("ConversationsManageHandler called", zap.Any("params", request.Params))
+	channel, err := ch.writableChannel(ctx, request.GetString("channel_id", ""), "conversations_manage")
+	if err != nil {
+		return nil, err
+	}
+	api := ch.ap(ctx).Slack()
+	switch action := request.GetString("action", ""); action {
+	case "archive":
+		err = api.ArchiveConversationContext(ctx, channel)
+	case "unarchive":
+		err = api.UnArchiveConversationContext(ctx, channel)
+	case "rename":
+		name := request.GetString("name", "")
+		if name == "" {
+			return nil, errors.New("rename needs name")
+		}
+		_, err = api.RenameConversationContext(ctx, channel, name)
+	case "kick":
+		user, uerr := ch.resolveUserID(ctx, request.GetString("user", ""))
+		if uerr != nil {
+			return nil, uerr
+		}
+		err = api.KickUserFromConversationContext(ctx, channel, user)
+	default:
+		return nil, errors.New("action must be archive, unarchive, rename or kick")
+	}
+	if err != nil {
+		return nil, err
+	}
+	return mcp.NewToolResultText(fmt.Sprintf("Done: %s on channel %s", request.GetString("action", ""), channel)), nil
+}
+
+// BookmarksHandler lists, adds, edits or removes a channel's bookmarks.
+func (ch *ConversationsHandler) BookmarksHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	ch.logger.Debug("BookmarksHandler called", zap.Any("params", request.Params))
+	action := request.GetString("action", "list")
+	api := ch.ap(ctx).Slack()
+	type bookmark struct {
+		ID    string `json:"id"`
+		Title string `json:"title"`
+		Link  string `json:"link"`
+		Emoji string `json:"emoji,omitempty"`
+		Type  string `json:"type"`
+	}
+	summary := func(b slack.Bookmark) bookmark {
+		return bookmark{ID: b.ID, Title: b.Title, Link: b.Link, Emoji: b.Emoji, Type: b.Type}
+	}
+
+	if action == "list" {
+		channel, err := ch.resolveChannelID(ctx, request.GetString("channel_id", ""))
+		if err != nil {
+			return nil, err
+		}
+		items, err := api.ListBookmarksContext(ctx, channel)
+		if err != nil {
+			return nil, err
+		}
+		out := make([]bookmark, 0, len(items))
+		for _, b := range items {
+			out = append(out, summary(b))
+		}
+		return jsonResult(map[string]any{"channel": channel, "bookmarks": out})
+	}
+
+	channel, err := ch.writableChannel(ctx, request.GetString("channel_id", ""), "bookmarks")
+	if err != nil {
+		return nil, err
+	}
+	id := request.GetString("bookmark_id", "")
+	args := request.GetArguments()
+	switch action {
+	case "add":
+		title, link := request.GetString("title", ""), request.GetString("link", "")
+		if title == "" || link == "" {
+			return nil, errors.New("add needs title and link")
+		}
+		b, err := api.AddBookmarkContext(ctx, channel, slack.AddBookmarkParameters{Title: title, Type: "link", Link: link, Emoji: request.GetString("emoji", "")})
+		if err != nil {
+			return nil, err
+		}
+		return jsonResult(summary(b))
+	case "edit":
+		if id == "" {
+			return nil, errors.New("edit needs bookmark_id")
+		}
+		params := slack.EditBookmarkParameters{Link: request.GetString("link", "")}
+		if _, ok := args["title"]; ok {
+			t := request.GetString("title", "")
+			params.Title = &t
+		}
+		if _, ok := args["emoji"]; ok {
+			e := request.GetString("emoji", "")
+			params.Emoji = &e
+		}
+		b, err := api.EditBookmarkContext(ctx, channel, id, params)
+		if err != nil {
+			return nil, err
+		}
+		return jsonResult(summary(b))
+	case "remove":
+		if id == "" {
+			return nil, errors.New("remove needs bookmark_id")
+		}
+		if err := api.RemoveBookmarkContext(ctx, channel, id); err != nil {
+			return nil, err
+		}
+		return mcp.NewToolResultText(fmt.Sprintf("Removed bookmark %s from channel %s", id, channel)), nil
+	}
+	return nil, errors.New("action must be list, add, edit or remove")
+}
+
+// PresenceHandler reads someone's presence, or sets the account user's own.
+func (ch *ConversationsHandler) PresenceHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	ch.logger.Debug("PresenceHandler called", zap.Any("params", request.Params))
+	api := ch.ap(ctx).Slack()
+	switch request.GetString("action", "get") {
+	case "get":
+		var user string
+		if raw := request.GetString("user", ""); raw != "" {
+			id, err := ch.resolveUserID(ctx, raw)
+			if err != nil {
+				return nil, err
+			}
+			user = id
+		} else {
+			// users.getPresence answers user_not_found to an empty user.
+			me, err := api.AuthTest()
+			if err != nil {
+				return nil, err
+			}
+			user = me.UserID
+		}
+		p, err := api.GetUserPresenceContext(ctx, user)
+		if err != nil {
+			return nil, err
+		}
+		return jsonResult(map[string]any{"user": user, "presence": p.Presence, "online": p.Online, "manual_away": p.ManualAway})
+	case "set":
+		if err := requireWrites("SLACK_MCP_ADD_MESSAGE_TOOL", "presence"); err != nil {
+			return nil, err
+		}
+		presence := request.GetString("presence", "")
+		if presence != "auto" && presence != "away" {
+			return nil, errors.New("presence must be auto (active when online) or away")
+		}
+		if err := api.SetUserPresenceContext(ctx, presence); err != nil {
+			return nil, err
+		}
+		return mcp.NewToolResultText("Presence set to " + presence), nil
+	}
+	return nil, errors.New("action must be get or set")
+}
+
+// DNDHandler reads Do Not Disturb, or pauses / resumes the account user's notifications.
+func (ch *ConversationsHandler) DNDHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	ch.logger.Debug("DNDHandler called", zap.Any("params", request.Params))
+	api := ch.ap(ctx).Slack()
+	var (
+		status *slack.DNDStatus
+		err    error
+	)
+	switch request.GetString("action", "info") {
+	case "info":
+		var user *string
+		if raw := request.GetString("user", ""); raw != "" {
+			id, uerr := ch.resolveUserID(ctx, raw)
+			if uerr != nil {
+				return nil, uerr
+			}
+			user = &id
+		}
+		status, err = api.GetDNDInfoContext(ctx, user)
+	case "snooze":
+		if werr := requireWrites("SLACK_MCP_ADD_MESSAGE_TOOL", "dnd"); werr != nil {
+			return nil, werr
+		}
+		minutes := request.GetInt("minutes", 0)
+		if minutes <= 0 {
+			return nil, errors.New("snooze needs minutes > 0")
+		}
+		status, err = api.SetSnoozeContext(ctx, minutes)
+	case "end":
+		if werr := requireWrites("SLACK_MCP_ADD_MESSAGE_TOOL", "dnd"); werr != nil {
+			return nil, werr
+		}
+		status, err = api.EndSnoozeContext(ctx)
+	default:
+		return nil, errors.New("action must be info, snooze or end")
+	}
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]any{"dnd_enabled": status.Enabled, "snoozed": status.SnoozeEnabled}
+	if status.SnoozeEndTime != 0 {
+		out["snooze_until"] = time.Unix(int64(status.SnoozeEndTime), 0).UTC().Format(time.RFC3339)
+	}
+	if status.NextStartTimestamp != 0 {
+		out["next_dnd_start"] = time.Unix(int64(status.NextStartTimestamp), 0).UTC().Format(time.RFC3339)
+		out["next_dnd_end"] = time.Unix(int64(status.NextEndTimestamp), 0).UTC().Format(time.RFC3339)
+	}
+	return jsonResult(out)
+}
+
 // RemindersAddHandler sets a reminder for the account user.
 func (ch *ConversationsHandler) RemindersAddHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	ch.logger.Debug("RemindersAddHandler called", zap.Any("params", request.Params))

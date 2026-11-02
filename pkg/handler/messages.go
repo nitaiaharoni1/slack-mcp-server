@@ -283,6 +283,93 @@ func (ch *ConversationsHandler) MessagesForwardHandler(ctx context.Context, requ
 	return mcp.NewToolResultText(fmt.Sprintf("Forwarded message %s from %s to channel %s (ts=%s)", ts, source, respChannel, respTS)), nil
 }
 
+type fileSummary struct {
+	ID        string   `json:"id"`
+	Name      string   `json:"name"`
+	Title     string   `json:"title"`
+	Type      string   `json:"type"`
+	Size      int      `json:"size"`
+	User      string   `json:"user"`
+	Created   string   `json:"created"`
+	Permalink string   `json:"permalink"`
+	SharedIn  []string `json:"shared_in"`
+}
+
+func summarizeFile(f slack.File) fileSummary {
+	shared := append(append(append([]string{}, f.Channels...), f.Groups...), f.IMs...)
+	return fileSummary{
+		ID: f.ID, Name: f.Name, Title: f.Title, Type: f.PrettyType, Size: f.Size, User: f.User,
+		Created: f.Created.Time().UTC().Format(time.RFC3339), Permalink: f.Permalink, SharedIn: shared,
+	}
+}
+
+// FilesListHandler lists files, newest first, optionally by channel, user or type.
+func (ch *ConversationsHandler) FilesListHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	ch.logger.Debug("FilesListHandler called", zap.Any("params", request.Params))
+	params := slack.GetFilesParameters{
+		Types: request.GetString("types", ""),
+		Count: request.GetInt("limit", 20),
+		Page:  request.GetInt("page", 1),
+	}
+	if raw := request.GetString("channel_id", ""); raw != "" {
+		channel, err := ch.resolveChannelID(ctx, raw)
+		if err != nil {
+			return nil, err
+		}
+		params.Channel = channel
+	}
+	if raw := request.GetString("user", ""); raw != "" {
+		user, err := ch.resolveUserID(ctx, raw)
+		if err != nil {
+			return nil, err
+		}
+		params.User = user
+	}
+	files, paging, err := ch.ap(ctx).Slack().GetFilesContext(ctx, params)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]fileSummary, 0, len(files))
+	for _, f := range files {
+		out = append(out, summarizeFile(f))
+	}
+	result := map[string]any{"files": out}
+	if paging != nil {
+		result["page"], result["pages"] = paging.Page, paging.Pages
+	}
+	return jsonResult(result)
+}
+
+// FilesInfoHandler returns one file's details.
+func (ch *ConversationsHandler) FilesInfoHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	ch.logger.Debug("FilesInfoHandler called", zap.Any("params", request.Params))
+	id := request.GetString("file_id", "")
+	if id == "" {
+		return nil, errors.New("file_id is required")
+	}
+	f, _, _, err := ch.ap(ctx).Slack().GetFileInfoContext(ctx, id, 0, 0)
+	if err != nil {
+		return nil, err
+	}
+	return jsonResult(summarizeFile(*f))
+}
+
+// FilesDeleteHandler deletes a file. Canvases and Lists are files too.
+func (ch *ConversationsHandler) FilesDeleteHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	ch.logger.Debug("FilesDeleteHandler called", zap.Any("params", request.Params))
+	if err := requireWrites("SLACK_MCP_ADD_MESSAGE_TOOL", "files_delete"); err != nil {
+		return nil, err
+	}
+	id := request.GetString("file_id", "")
+	if id == "" {
+		return nil, errors.New("file_id is required")
+	}
+	if err := ch.ap(ctx).Slack().DeleteFileContext(ctx, id); err != nil {
+		return nil, err
+	}
+	return mcp.NewToolResultText("Deleted file " + id), nil
+}
+
 // FilesUploadHandler uploads a file, optionally sharing it to a channel or thread.
 func (ch *ConversationsHandler) FilesUploadHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	ch.logger.Debug("FilesUploadHandler called", zap.Any("params", request.Params))

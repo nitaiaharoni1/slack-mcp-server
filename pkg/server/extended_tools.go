@@ -45,15 +45,26 @@ const (
 	ToolPins                    = "pins"
 	ToolRemindersAdd            = "reminders_add"
 	ToolUsersSetStatus          = "users_set_status"
+	ToolFilesList               = "files_list"
+	ToolFilesInfo               = "files_info"
+	ToolFilesDelete             = "files_delete"
+	ToolConversationsManage     = "conversations_manage"
+	ToolBookmarks               = "bookmarks"
+	ToolPresence                = "presence"
+	ToolDND                     = "dnd"
 )
 
 func init() {
 	ValidToolNames = append(ValidToolNames,
 		ToolListAccounts, ToolMessagesUpdate, ToolMessagesDelete, ToolMessagesSchedule,
-		ToolMessagesScheduledList, ToolMessagesScheduledDelete, ToolMessagesPermalink,
-		ToolFilesUpload, ToolUsersInfo, ToolCanvasesCreate, ToolCanvasesRead, ToolCanvasesEdit,
-		ToolCanvasesSectionsLookup, ToolCanvasesDelete, ToolListsCreate, ToolListsItemsList,
-		ToolListsItemGet, ToolListsItemsCreate, ToolListsItemsUpdate, ToolListsItemsDelete,
+		ToolMessagesScheduledList, ToolMessagesScheduledDelete, ToolMessagesPermalink, ToolMessagesForward,
+		ToolFilesUpload, ToolFilesList, ToolFilesInfo, ToolFilesDelete, ToolUsersInfo,
+		ToolCanvasesCreate, ToolCanvasesRead, ToolCanvasesEdit, ToolCanvasesSectionsLookup, ToolCanvasesDelete,
+		ToolListsCreate, ToolListsItemsList, ToolListsItemGet, ToolListsItemsCreate, ToolListsItemsUpdate,
+		ToolListsItemsDelete, ToolListsUpdate,
+		ToolConversationsCreate, ToolConversationsInfo, ToolConversationsMembers, ToolConversationsInvite,
+		ToolConversationsSetTopic, ToolConversationsManage, ToolReactionsGet, ToolEmojiSearch, ToolPins,
+		ToolBookmarks, ToolRemindersAdd, ToolUsersSetStatus, ToolPresence, ToolDND,
 	)
 }
 
@@ -166,6 +177,31 @@ func registerExtendedTools(s *server.MCPServer, registry *provider.Registry, ena
 		mcp.WithString("thread_ts", mcp.Description("Optional thread ts to share into (needs channel_id).")),
 		mcp.WithString("initial_comment", mcp.Description("Optional message posted with the file.")),
 	), convs.FilesUploadHandler)
+
+	add(ToolFilesList, "", mcp.NewTool(ToolFilesList,
+		mcp.WithDescription("List files the account can see, newest first, optionally only one channel's, one person's, or one type. Canvases and Lists are files too."),
+		mcp.WithTitleAnnotation("List Files"),
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithString("channel_id", mcp.Description("Optional: only files shared in this channel. "+channelArgDescription)),
+		mcp.WithString("user", mcp.Description("Optional: only files this person uploaded (ID, @handle, name or email).")),
+		mcp.WithString("types", mcp.Description("Optional comma-separated types: all, spaces, snippets, images, gdocs, zips, pdfs, canvas, list.")),
+		mcp.WithNumber("limit", mcp.DefaultNumber(20), mcp.Description("Files per page.")),
+		mcp.WithNumber("page", mcp.DefaultNumber(1), mcp.Description("Page number, from 1.")),
+	), convs.FilesListHandler)
+
+	add(ToolFilesInfo, "", mcp.NewTool(ToolFilesInfo,
+		mcp.WithDescription("Get a file's details: name, type, size, uploader, permalink, where it is shared. Use attachment_get_data to read its content."),
+		mcp.WithTitleAnnotation("Get File Info"),
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithString("file_id", mcp.Required(), mcp.Description("File ID (Fxxxxxxxxxx).")),
+	), convs.FilesInfoHandler)
+
+	add(ToolFilesDelete, "SLACK_MCP_ADD_MESSAGE_TOOL", mcp.NewTool(ToolFilesDelete,
+		mcp.WithDescription("Delete a file the account uploaded or owns, including a canvas or a List. Removes it everywhere it was shared. Cannot be undone."),
+		mcp.WithTitleAnnotation("Delete File"),
+		mcp.WithDestructiveHintAnnotation(true),
+		mcp.WithString("file_id", mcp.Required(), mcp.Description("File ID (Fxxxxxxxxxx).")),
+	), convs.FilesDeleteHandler)
 
 	add(ToolUsersInfo, "", mcp.NewTool(ToolUsersInfo,
 		mcp.WithDescription("Get one user's full profile: title, email, phone, status, time zone and custom profile fields."),
@@ -321,6 +357,46 @@ func registerExtendedTools(s *server.MCPServer, registry *provider.Registry, ena
 		mcp.WithString("topic", mcp.Description("New topic.")),
 		mcp.WithString("purpose", mcp.Description("New purpose (the channel description).")),
 	), convs.ConversationsSetTopicHandler)
+
+	add(ToolConversationsManage, "SLACK_MCP_ADD_MESSAGE_TOOL", mcp.NewTool(ToolConversationsManage,
+		mcp.WithDescription("Archive, unarchive or rename a channel, or remove someone from it. Follows the SLACK_MCP_ADD_MESSAGE_TOOL channel policy."),
+		mcp.WithTitleAnnotation("Manage Channel"),
+		mcp.WithDestructiveHintAnnotation(true),
+		mcp.WithString("action", mcp.Required(), mcp.Description("archive, unarchive, rename or kick.")),
+		mcp.WithString("channel_id", mcp.Required(), mcp.Description(channelArgDescription)),
+		mcp.WithString("name", mcp.Description("New name, for rename: lowercase, no spaces, up to 80 characters.")),
+		mcp.WithString("user", mcp.Description("Who to remove, for kick (ID, @handle, name or email).")),
+	), convs.ConversationsManageHandler)
+
+	add(ToolBookmarks, "", mcp.NewTool(ToolBookmarks,
+		mcp.WithDescription("List a channel's bookmarks (the links under its name), or add, edit or remove one. Changes follow the SLACK_MCP_ADD_MESSAGE_TOOL channel policy."),
+		mcp.WithTitleAnnotation("Channel Bookmarks"),
+		mcp.WithDestructiveHintAnnotation(true),
+		mcp.WithString("action", mcp.DefaultString("list"), mcp.Description("list, add, edit or remove.")),
+		mcp.WithString("channel_id", mcp.Required(), mcp.Description(channelArgDescription)),
+		mcp.WithString("title", mcp.Description("Bookmark title; required for add.")),
+		mcp.WithString("link", mcp.Description("URL; required for add.")),
+		mcp.WithString("emoji", mcp.Description("Optional emoji, e.g. :link:.")),
+		mcp.WithString("bookmark_id", mcp.Description("Required for edit and remove.")),
+	), convs.BookmarksHandler)
+
+	add(ToolPresence, "", mcp.NewTool(ToolPresence,
+		mcp.WithDescription("Get someone's presence (active / away), or set the account user's own: auto means active while connected, away forces away."),
+		mcp.WithTitleAnnotation("Presence"),
+		mcp.WithDestructiveHintAnnotation(true),
+		mcp.WithString("action", mcp.DefaultString("get"), mcp.Description("get or set.")),
+		mcp.WithString("user", mcp.Description("For get: whose presence (ID, @handle, name or email); empty means the account user.")),
+		mcp.WithString("presence", mcp.Description("For set: auto or away.")),
+	), convs.PresenceHandler)
+
+	add(ToolDND, "", mcp.NewTool(ToolDND,
+		mcp.WithDescription("Do Not Disturb: read someone's DND state, or pause the account user's notifications for some minutes (snooze) and resume them (end)."),
+		mcp.WithTitleAnnotation("Do Not Disturb"),
+		mcp.WithDestructiveHintAnnotation(true),
+		mcp.WithString("action", mcp.DefaultString("info"), mcp.Description("info, snooze or end.")),
+		mcp.WithString("user", mcp.Description("For info: whose DND (ID, @handle, name or email); empty means the account user.")),
+		mcp.WithNumber("minutes", mcp.Description("For snooze: how long to pause notifications.")),
+	), convs.DNDHandler)
 
 	add(ToolReactionsGet, "", mcp.NewTool(ToolReactionsGet,
 		mcp.WithDescription("List the reactions on a message and who added each one."),
