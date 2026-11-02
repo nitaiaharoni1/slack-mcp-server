@@ -4,19 +4,18 @@
   "display_name": "Slack MCP Server",
   "version": "0.0.0",
   "description": "The most powerful MCP Slack Server with no permission requirements, Apps support, multiple transports Stdio and SSE, DMs, Group DMs and smart history fetch logic.",
-  "long_description": "Model Context Protocol (MCP) server for Slack Workspaces. The most powerful MCP Slack server — supports Stdio and SSE transports, proxy settings, DMs, Group DMs, Smart History fetch (by date or count), may work via OAuth or in complete stealth mode with no permissions and scopes in Workspace \uD83D\uDE0F.\nThis feature-rich Slack MCP Server has:\n\n - Stealth and OAuth Modes: Run the server without requiring additional permissions or bot installations (stealth mode), or use secure OAuth tokens for access without needing to refresh or extract tokens from the browser (OAuth mode).\n - Enterprise Workspaces Support: Possibility to integrate with Enterprise Slack setups.\n - Channel and Thread Support with `#Name` `@Lookup`: Fetch messages from channels and threads, including activity messages, and retrieve channels using their names (e.g., `#general`) as well as their IDs.\n - Smart History: Fetch messages with pagination by date (d1, 7d, 1m) or message count.\n - Search Messages: Search messages in channels, threads, and DMs using various filters like date, user, and content.\n - Safe Message Posting: The `conversations_add_message` tool is disabled by default for safety. Enable it via an environment variable, with optional channel restrictions.\n - DM and Group DM support: Retrieve direct messages and group direct messages.\n - Embedded user information: Embed user information in messages, for better context.\n - Cache support: Cache users and channels for faster access.\n - Stdio/SSE Transports & Proxy Support: Use the server with any MCP client that supports Stdio or SSE transports, and configure it to route outgoing requests through a proxy if needed.\n",
+  "long_description": "Model Context Protocol (MCP) server for Slack Workspaces. The most powerful MCP Slack server — supports Stdio and SSE transports, proxy settings, DMs, Group DMs, Smart History fetch (by date or count), may work via OAuth or in complete stealth mode with no permissions and scopes in Workspace 😏.\nThis feature-rich Slack MCP Server has:\n\n - Stealth and OAuth Modes: Run the server without requiring additional permissions or bot installations (stealth mode), or use secure OAuth tokens for access without needing to refresh or extract tokens from the browser (OAuth mode).\n - Enterprise Workspaces Support: Possibility to integrate with Enterprise Slack setups.\n - Channel and Thread Support with `#Name` `@Lookup`: Fetch messages from channels and threads, including activity messages, and retrieve channels using their names (e.g., `#general`) as well as their IDs.\n - Smart History: Fetch messages with pagination by date (d1, 7d, 1m) or message count.\n - Search Messages: Search messages in channels, threads, and DMs using various filters like date, user, and content.\n - Safe Message Posting: The `conversations_add_message` tool is disabled by default for safety. Enable it via an environment variable, with optional channel restrictions.\n - DM and Group DM support: Retrieve direct messages and group direct messages.\n - Embedded user information: Embed user information in messages, for better context.\n - Cache support: Cache users and channels for faster access.\n - Stdio/SSE Transports & Proxy Support: Use the server with any MCP client that supports Stdio or SSE transports, and configure it to route outgoing requests through a proxy if needed.\n",
   "author": {
-    "name": "Dmitrii Korotovskii",
-    "email": "dmitry@korotovsky.io",
-    "url": "https://www.linkedin.com/in/korotovsky/"
+    "name": "Nitai Aharoni",
+    "url": "https://github.com/nitaiaharoni1"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/korotovsky/slack-mcp-server"
+    "url": "https://github.com/nitaiaharoni1/slack-mcp-server"
   },
-  "homepage": "https://github.com/korotovsky/slack-mcp-server",
-  "documentation": "https://github.com/korotovsky/slack-mcp-server?tab=readme-ov-file#slack-mcp-server",
-  "support": "https://github.com/korotovsky/slack-mcp-server/issues/new",
+  "homepage": "https://github.com/nitaiaharoni1/slack-mcp-server",
+  "documentation": "https://github.com/nitaiaharoni1/slack-mcp-server?tab=readme-ov-file#slack-mcp-server",
+  "support": "https://github.com/nitaiaharoni1/slack-mcp-server/issues/new",
   "icon": "icon.png",
   "screenshots": [],
   "server": {
@@ -24,7 +23,11 @@
     "entry_point": "${__dirname}/server/index.js",
     "mcp_config": {
       "command": "node",
-      "args": ["${__dirname}/server/index.js" ,"--transport", "stdio"],
+      "args": [
+        "${__dirname}/server/index.js",
+        "--transport",
+        "stdio"
+      ],
       "env": {
         "HOME": "${HOME}",
         "SLACK_MCP_DXT": "true",
@@ -40,11 +43,22 @@
     }
   },
   "tools_generated": true,
-  "keywords": ["slack", "mcp", "slack-api", "assistants", "llm", "mcp-server"],
+  "keywords": [
+    "slack",
+    "mcp",
+    "slack-api",
+    "assistants",
+    "llm",
+    "mcp-server"
+  ],
   "license": "MIT",
   "compatibility": {
     "claude_desktop": ">=0.11.6",
-    "platforms": ["darwin", "win32", "linux"],
+    "platforms": [
+      "darwin",
+      "win32",
+      "linux"
+    ],
     "runtimes": {
       "node": ">=18.0.0"
     }
@@ -60,21 +74,21 @@
     "xoxc_token": {
       "type": "string",
       "title": "Value for xoxc-... token",
-      "description": "The xoxc-... token for Slack MCP Server. This token is used to authenticate the server with Slack's API. Please see https://github.com/korotovsky/slack-mcp-server/blob/master/docs/01-authentication-setup.md#lookup-slack_mcp_xoxc_token info on how to obtain it.",
+      "description": "The xoxc-... token for Slack MCP Server. This token is used to authenticate the server with Slack's API. Please see https://github.com/nitaiaharoni1/slack-mcp-server/blob/master/docs/01-authentication-setup.md#lookup-slack_mcp_xoxc_token info on how to obtain it.",
       "sensitive": true,
       "required": false
     },
     "xoxd_token": {
       "type": "string",
       "title": "Value for xoxd-... token",
-      "description": "The xoxd-... token for Slack MCP Server. This token is used to authenticate the server with Slack's API. Please see https://github.com/korotovsky/slack-mcp-server/blob/master/docs/01-authentication-setup.md#lookup-slack_mcp_xoxd_token info on how to obtain it.",
+      "description": "The xoxd-... token for Slack MCP Server. This token is used to authenticate the server with Slack's API. Please see https://github.com/nitaiaharoni1/slack-mcp-server/blob/master/docs/01-authentication-setup.md#lookup-slack_mcp_xoxd_token info on how to obtain it.",
       "sensitive": true,
       "required": false
     },
     "xoxp_token": {
       "type": "string",
       "title": "Value for xoxp token",
-      "description": "The xoxp token for Slack MCP Server. IMPORTANT: Use it only when you don't use xoxc/xoxd pair. This token is used to authenticate the server with Slack's API using OAuth2. Please see https://github.com/korotovsky/slack-mcp-server/blob/master/docs/01-authentication-setup.md#alternative-using-slack_mcp_xoxp_token-user-oauth info on how to obtain it.",
+      "description": "The xoxp token for Slack MCP Server. IMPORTANT: Use it only when you don't use xoxc/xoxd pair. This token is used to authenticate the server with Slack's API using OAuth2. Please see https://github.com/nitaiaharoni1/slack-mcp-server/blob/master/docs/01-authentication-setup.md#alternative-using-slack_mcp_xoxp_token-user-oauth info on how to obtain it.",
       "sensitive": true,
       "required": false
     },

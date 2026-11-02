@@ -1,12 +1,8 @@
 # Slack MCP Server
-[![Trust Score](https://archestra.ai/mcp-catalog/api/badge/quality/korotovsky/slack-mcp-server)](https://archestra.ai/mcp-catalog/korotovsky__slack-mcp-server)
+
+A fork of [korotovsky/slack-mcp-server](https://github.com/korotovsky/slack-mcp-server) that runs several Slack workspaces from one server and adds tools for editing, scheduling, forwarding, files, canvases, Lists, bookmarks, presence and more (see [This fork](#this-fork-multiple-accounts-and-more-tools)). Install with `npx -y @nitaiaharoni1/slack-mcp-server@latest`.
 
 Model Context Protocol (MCP) server for Slack Workspaces. The most powerful MCP Slack server — supports Stdio, SSE and HTTP transports, proxy settings, DMs, Group DMs, Smart History fetch (by date or count), may work via OAuth or in complete stealth mode with no permissions and scopes in Workspace 😏.
-
-> [!IMPORTANT]  
-> We need your support! Each month, over 30,000 engineers visit this repository, and more than 9,000 are already using it.
-> 
-> If you appreciate the work our [contributors](https://github.com/korotovsky/slack-mcp-server/graphs/contributors) have put into this project, please consider giving the repository a star.
 
 This feature-rich Slack MCP Server has:
 - **Stealth and OAuth Modes**: Run the server without requiring additional permissions or bot installations (stealth mode), or use secure OAuth tokens for access without needing to refresh or extract tokens from the browser (OAuth mode).
@@ -39,10 +35,10 @@ Messages sent with a user token (`xoxp`) are posted as you, with no "Sent using"
 Accounts:
 
 ```bash
-SLACK_MCP_ACCOUNTS=vistral,lighthouse          # names: lowercase letters, digits, - and _
-SLACK_MCP_DEFAULT_ACCOUNT=vistral              # optional; defaults to the first one
-SLACK_MCP_VISTRAL_XOXP_TOKEN=xoxp-...          # per account: _XOXP_TOKEN, _XOXB_TOKEN, or _XOXC_TOKEN + _XOXD_TOKEN
-SLACK_MCP_LIGHTHOUSE_XOXP_TOKEN=xoxp-...
+SLACK_MCP_ACCOUNTS=work,personal               # names: lowercase letters, digits, - and _
+SLACK_MCP_DEFAULT_ACCOUNT=work                 # optional; defaults to the first one
+SLACK_MCP_WORK_XOXP_TOKEN=xoxp-...             # per account: _XOXP_TOKEN, _XOXB_TOKEN, or _XOXC_TOKEN + _XOXD_TOKEN
+SLACK_MCP_PERSONAL_XOXP_TOKEN=xoxp-...
 ```
 
 Guards against mixing up workspaces, active when more than one account is configured:

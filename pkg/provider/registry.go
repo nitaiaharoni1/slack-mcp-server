@@ -61,14 +61,14 @@ func LegacyCredentials() Credentials {
 var accountNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
 
 // AccountEnvPrefix is the variable prefix for one named account:
-// account "vistral" reads SLACK_MCP_VISTRAL_XOXP_TOKEN and so on.
+// account "work" reads SLACK_MCP_WORK_XOXP_TOKEN and so on.
 func AccountEnvPrefix(name string) string {
 	return "SLACK_MCP_" + strings.ToUpper(strings.ReplaceAll(name, "-", "_")) + "_"
 }
 
 // CredentialsFromEnv returns every configured account.
 //
-// SLACK_MCP_ACCOUNTS="vistral,lighthouse" declares named accounts, each reading
+// SLACK_MCP_ACCOUNTS="work,personal" declares named accounts, each reading
 // SLACK_MCP_<NAME>_XOXP_TOKEN (or _XOXB_TOKEN, or _XOXC_TOKEN + _XOXD_TOKEN).
 // Without it, the legacy single-account variables make one account "default".
 // The default account is SLACK_MCP_DEFAULT_ACCOUNT, else the first one listed.

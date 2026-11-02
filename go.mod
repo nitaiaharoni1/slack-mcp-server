@@ -1,4 +1,4 @@
-module github.com/korotovsky/slack-mcp-server
+module github.com/nitaiaharoni1/slack-mcp-server
 
 go 1.25
 

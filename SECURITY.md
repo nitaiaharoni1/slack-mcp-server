@@ -16,7 +16,7 @@ If you discover a security vulnerability, **please do not create a public issue*
 
 Instead, follow these steps:
 
-1. **Email directly at:** [dmitry@korotovsky.io](mailto:dmitry@korotovsky.io)
+1. **Report it privately** through [GitHub security advisories](https://github.com/nitaiaharoni1/slack-mcp-server/security/advisories/new)
 2. Provide as much detail as possible, including:
    - Steps to reproduce the vulnerability
    - Affected versions

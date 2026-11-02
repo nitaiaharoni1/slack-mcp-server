@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/korotovsky/slack-mcp-server/pkg/handler"
-	"github.com/korotovsky/slack-mcp-server/pkg/provider"
+	"github.com/nitaiaharoni1/slack-mcp-server/pkg/handler"
+	"github.com/nitaiaharoni1/slack-mcp-server/pkg/provider"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
