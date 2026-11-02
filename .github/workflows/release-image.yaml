@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - '*'
+  workflow_dispatch:
 
 env:
   DOCKERHUB_IMAGE_NAME: ${{ github.repository }}
