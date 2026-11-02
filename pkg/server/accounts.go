@@ -7,10 +7,10 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/nitaiaharoni1/slack-mcp-server/pkg/provider"
-	"github.com/nitaiaharoni1/slack-mcp-server/pkg/text"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/nitaiaharoni1/slack-mcp-server/pkg/provider"
+	"github.com/nitaiaharoni1/slack-mcp-server/pkg/text"
 )
 
 // AccountArg is the argument every tool takes to pick the Slack account.

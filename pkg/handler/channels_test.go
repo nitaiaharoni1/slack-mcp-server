@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/nitaiaharoni1/slack-mcp-server/pkg/test/util"
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/nitaiaharoni1/slack-mcp-server/pkg/test/util"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

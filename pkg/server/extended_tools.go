@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 
-	"github.com/nitaiaharoni1/slack-mcp-server/pkg/handler"
-	"github.com/nitaiaharoni1/slack-mcp-server/pkg/provider"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
+	"github.com/nitaiaharoni1/slack-mcp-server/pkg/handler"
+	"github.com/nitaiaharoni1/slack-mcp-server/pkg/provider"
 )
 
 // Tools this fork adds on top of upstream. They live here, apart from

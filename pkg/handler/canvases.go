@@ -9,8 +9,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/nitaiaharoni1/slack-mcp-server/pkg/provider"
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/nitaiaharoni1/slack-mcp-server/pkg/provider"
 	"github.com/slack-go/slack"
 	"go.uber.org/zap"
 )

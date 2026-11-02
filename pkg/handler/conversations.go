@@ -16,12 +16,12 @@ import (
 	"time"
 
 	"github.com/gocarina/gocsv"
+	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/nitaiaharoni1/slack-mcp-server/pkg/limiter"
 	"github.com/nitaiaharoni1/slack-mcp-server/pkg/provider"
 	"github.com/nitaiaharoni1/slack-mcp-server/pkg/provider/edge"
 	"github.com/nitaiaharoni1/slack-mcp-server/pkg/server/auth"
 	"github.com/nitaiaharoni1/slack-mcp-server/pkg/text"
-	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/slack-go/slack"
 	slackGoUtil "github.com/takara2314/slack-go-util"
 	"go.uber.org/zap"
