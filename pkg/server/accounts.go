@@ -95,11 +95,15 @@ func crossWorkspaceError(registry *provider.Registry, ap *provider.ApiProvider, 
 		return ""
 	}
 
-	if ch := req.GetString("channel_id", ""); channelIDPattern.MatchString(ch) && !ap.HasChannel(ch) {
+	for name, v := range req.GetArguments() {
+		ch, ok := v.(string)
+		if !ok || !strings.HasSuffix(name, "channel_id") || !channelIDPattern.MatchString(ch) || ap.HasChannel(ch) {
+			continue
+		}
 		for _, p := range others {
 			if p.HasChannel(ch) {
-				return fmt.Sprintf("channel %s belongs to account %q, not %q. Call again with account=%q, or pick a channel from account %q.",
-					ch, p.Name(), ap.Name(), p.Name(), ap.Name())
+				return fmt.Sprintf("%s %s belongs to account %q, not %q. Call again with account=%q, or pick a channel from account %q.",
+					name, ch, p.Name(), ap.Name(), p.Name(), ap.Name())
 			}
 		}
 	}

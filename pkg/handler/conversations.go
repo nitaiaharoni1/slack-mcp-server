@@ -96,6 +96,7 @@ type searchParams struct {
 type addMessageParams struct {
 	channel     string
 	threadTs    string
+	broadcast   bool
 	text        string
 	contentType string
 	blocks      []slack.Block
@@ -227,6 +228,9 @@ func (ch *ConversationsHandler) ConversationsAddMessageHandler(ctx context.Conte
 	var options []slack.MsgOption
 	if params.threadTs != "" {
 		options = append(options, slack.MsgOptionTS(params.threadTs))
+		if params.broadcast {
+			options = append(options, slack.MsgOptionBroadcast())
+		}
 	}
 
 	contentOptions, err := ch.messageContentOptions(params)
@@ -1801,6 +1805,10 @@ func (ch *ConversationsHandler) parseParamsToolAddMessage(ctx context.Context, r
 		ch.logger.Error("Invalid thread_ts format", zap.String("thread_ts", threadTs))
 		return nil, errors.New("thread_ts must be a valid timestamp in format 1234567890.123456")
 	}
+	broadcast := request.GetBool("reply_broadcast", false)
+	if broadcast && threadTs == "" {
+		return nil, errors.New("reply_broadcast needs thread_ts: it also posts a thread reply to the channel")
+	}
 
 	msgText := request.GetString("text", "")
 	if msgText == "" {
@@ -1854,6 +1862,7 @@ func (ch *ConversationsHandler) parseParamsToolAddMessage(ctx context.Context, r
 	return &addMessageParams{
 		channel:     channel,
 		threadTs:    threadTs,
+		broadcast:   broadcast,
 		text:        msgText,
 		contentType: contentType,
 		blocks:      blocks,

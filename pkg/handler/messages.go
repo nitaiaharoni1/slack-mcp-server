@@ -236,6 +236,53 @@ func (ch *ConversationsHandler) MessagesPermalinkHandler(ctx context.Context, re
 	return mcp.NewToolResultText(link), nil
 }
 
+// MessagesForwardHandler shares a message into another conversation. Slack has
+// no forward API, so it posts the message's permalink (after an optional
+// comment) with unfurling on, which Slack renders as the shared message.
+func (ch *ConversationsHandler) MessagesForwardHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	ch.logger.Debug("MessagesForwardHandler called", zap.Any("params", request.Params))
+
+	ts := request.GetString("timestamp", "")
+	if err := requireTS("timestamp", ts); err != nil {
+		return nil, err
+	}
+	source, err := ch.resolveChannelID(ctx, request.GetString("channel_id", ""))
+	if err != nil {
+		return nil, err
+	}
+	if source == "" {
+		return nil, errors.New("channel_id is required")
+	}
+	target, err := ch.writableChannel(ctx, request.GetString("target_channel_id", ""), "messages_forward")
+	if err != nil {
+		return nil, err
+	}
+	threadTs := request.GetString("target_thread_ts", "")
+	if threadTs != "" {
+		if err := requireTS("target_thread_ts", threadTs); err != nil {
+			return nil, err
+		}
+	}
+
+	link, err := ch.ap(ctx).Slack().GetPermalinkContext(ctx, &slack.PermalinkParameters{Channel: source, Ts: ts})
+	if err != nil {
+		return nil, err
+	}
+	text := link
+	if comment := strings.TrimSpace(request.GetString("comment", "")); comment != "" {
+		text = comment + "\n" + link
+	}
+	options := []slack.MsgOption{slack.MsgOptionText(text, false), slack.MsgOptionEnableLinkUnfurl()}
+	if threadTs != "" {
+		options = append(options, slack.MsgOptionTS(threadTs))
+	}
+	respChannel, respTS, err := ch.ap(ctx).Slack().PostMessageContext(ctx, target, options...)
+	if err != nil {
+		return nil, err
+	}
+	return mcp.NewToolResultText(fmt.Sprintf("Forwarded message %s from %s to channel %s (ts=%s)", ts, source, respChannel, respTS)), nil
+}
+
 // FilesUploadHandler uploads a file, optionally sharing it to a channel or thread.
 func (ch *ConversationsHandler) FilesUploadHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	ch.logger.Debug("FilesUploadHandler called", zap.Any("params", request.Params))

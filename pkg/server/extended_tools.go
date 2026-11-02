@@ -20,6 +20,7 @@ const (
 	ToolMessagesScheduledList   = "messages_scheduled_list"
 	ToolMessagesScheduledDelete = "messages_scheduled_delete"
 	ToolMessagesPermalink       = "messages_permalink"
+	ToolMessagesForward         = "messages_forward"
 	ToolFilesUpload             = "files_upload"
 	ToolUsersInfo               = "users_info"
 	ToolCanvasesCreate          = "canvases_create"
@@ -140,6 +141,17 @@ func registerExtendedTools(s *server.MCPServer, registry *provider.Registry, ena
 		mcp.WithString("channel_id", mcp.Required(), mcp.Description(channelArgDescription)),
 		mcp.WithString("timestamp", mcp.Required(), mcp.Description("ts of the message, in format 1234567890.123456.")),
 	), convs.MessagesPermalinkHandler)
+
+	add(ToolMessagesForward, "SLACK_MCP_ADD_MESSAGE_TOOL", mcp.NewTool(ToolMessagesForward,
+		mcp.WithDescription("Forward a message to another channel, DM or thread in the same workspace, with an optional comment. Slack has no forward API: this posts the message's permalink, which Slack shows as the shared message. Both conversations must be in the account's workspace."),
+		mcp.WithTitleAnnotation("Forward Message"),
+		mcp.WithDestructiveHintAnnotation(true),
+		mcp.WithString("channel_id", mcp.Required(), mcp.Description("Channel the message is in. "+channelArgDescription)),
+		mcp.WithString("timestamp", mcp.Required(), mcp.Description("ts of the message to forward, in format 1234567890.123456.")),
+		mcp.WithString("target_channel_id", mcp.Required(), mcp.Description("Where to forward it. "+channelArgDescription)),
+		mcp.WithString("target_thread_ts", mcp.Description("Optional ts of a thread in the target to forward into.")),
+		mcp.WithString("comment", mcp.Description("Optional text posted above the forwarded message.")),
+	), convs.MessagesForwardHandler)
 
 	add(ToolFilesUpload, "SLACK_MCP_ADD_MESSAGE_TOOL", mcp.NewTool(ToolFilesUpload,
 		mcp.WithDescription("Upload a file (up to 5 MB) as the account, optionally sharing it to a channel or thread. Give exactly one of file_path, content or content_base64."),
