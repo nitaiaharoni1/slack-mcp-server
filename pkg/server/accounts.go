@@ -21,7 +21,7 @@ const AccountArg = "account"
 var writeTools = map[string]bool{}
 
 // actionTools default to a read-only "list" action; only their other actions write.
-var actionTools = map[string]bool{ToolPins: true, ToolReminders: true}
+var actionTools = map[string]bool{ToolPins: true}
 
 // addTool registers a tool with the shared account argument.
 func addTool(s *server.MCPServer, registry *provider.Registry, tool mcp.Tool, h server.ToolHandlerFunc) {

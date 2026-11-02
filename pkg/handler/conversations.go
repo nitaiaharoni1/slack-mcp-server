@@ -284,7 +284,8 @@ func (ch *ConversationsHandler) messageContentOptions(params *addMessageParams) 
 				options = append(options, slack.MsgOptionDisableMarkdown())
 				options = append(options, slack.MsgOptionText(params.text, false))
 			} else {
-				options = append(options, slack.MsgOptionBlocks(blocks...))
+				// Blocks alone leave notifications, previews and search with no text.
+				options = append(options, slack.MsgOptionBlocks(blocks...), slack.MsgOptionText(params.text, false))
 			}
 		default:
 			return nil, errors.New("content_type must be either 'text/plain' or 'text/markdown'")

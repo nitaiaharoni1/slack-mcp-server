@@ -302,58 +302,23 @@ func (ch *ConversationsHandler) PinsHandler(ctx context.Context, request mcp.Cal
 	return mcp.NewToolResultText(fmt.Sprintf("Pin %s: message %s in channel %s", action, ts, channel)), nil
 }
 
-// RemindersHandler adds, lists or deletes the account user's own reminders.
-func (ch *ConversationsHandler) RemindersHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	ch.logger.Debug("RemindersHandler called", zap.Any("params", request.Params))
-	switch request.GetString("action", "list") {
-	case "list":
-		reminders, err := ch.ap(ctx).Slack().ListRemindersContext(ctx)
-		if err != nil {
-			return nil, err
-		}
-		type reminder struct {
-			ID        string `json:"id"`
-			Text      string `json:"text"`
-			Time      string `json:"time,omitempty"`
-			Recurring bool   `json:"recurring"`
-			Done      bool   `json:"done"`
-		}
-		out := make([]reminder, 0, len(reminders))
-		for _, r := range reminders {
-			rm := reminder{ID: r.ID, Text: r.Text, Recurring: r.Recurring, Done: r.CompleteTS != 0}
-			if r.Time != 0 {
-				rm.Time = time.Unix(int64(r.Time), 0).UTC().Format(time.RFC3339)
-			}
-			out = append(out, rm)
-		}
-		return jsonResult(map[string]any{"reminders": out})
-	case "add":
-		if err := requireWrites("SLACK_MCP_ADD_MESSAGE_TOOL", "reminders"); err != nil {
-			return nil, err
-		}
-		text, when := request.GetString("text", ""), request.GetString("time", "")
-		if text == "" || when == "" {
-			return nil, errors.New("add needs text and time")
-		}
-		r, err := ch.ap(ctx).Slack().AddUserReminderContext(ctx, "", text, when)
-		if err != nil {
-			return nil, err
-		}
-		return jsonResult(map[string]any{"id": r.ID, "text": r.Text, "time": time.Unix(int64(r.Time), 0).UTC().Format(time.RFC3339)})
-	case "delete":
-		if err := requireWrites("SLACK_MCP_ADD_MESSAGE_TOOL", "reminders"); err != nil {
-			return nil, err
-		}
-		id := request.GetString("reminder_id", "")
-		if id == "" {
-			return nil, errors.New("delete needs reminder_id")
-		}
-		if err := ch.ap(ctx).Slack().DeleteReminderContext(ctx, id); err != nil {
-			return nil, err
-		}
-		return mcp.NewToolResultText("Deleted reminder " + id), nil
+// RemindersAddHandler sets a reminder for the account user.
+func (ch *ConversationsHandler) RemindersAddHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	ch.logger.Debug("RemindersAddHandler called", zap.Any("params", request.Params))
+	text, when := request.GetString("text", ""), request.GetString("time", "")
+	if text == "" || when == "" {
+		return nil, errors.New("reminders_add needs text and time")
 	}
-	return nil, errors.New("action must be list, add or delete")
+	// reminders.add treats an empty user as an unknown user, so name ourselves.
+	me, err := ch.ap(ctx).Slack().AuthTest()
+	if err != nil {
+		return nil, err
+	}
+	r, err := ch.ap(ctx).Slack().AddUserReminderContext(ctx, me.UserID, text, when)
+	if err != nil {
+		return nil, err
+	}
+	return jsonResult(map[string]any{"text": r.Text, "time": time.Unix(int64(r.Time), 0).UTC().Format(time.RFC3339)})
 }
 
 // StatusSetHandler sets or clears the account user's status.

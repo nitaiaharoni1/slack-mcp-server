@@ -27,7 +27,7 @@ This fork of [korotovsky/slack-mcp-server](https://github.com/korotovsky/slack-m
 
 - **Multiple accounts in one server.** Every tool takes an optional `account` argument; `list_accounts` shows each account's workspace, user and token type. Each account has its own client, caches and rate limiter.
 - **Messages:** `messages_update`, `messages_delete`, `messages_schedule`, `messages_scheduled_list`, `messages_scheduled_delete`, `messages_permalink`. Writes follow the `SLACK_MCP_ADD_MESSAGE_TOOL` channel policy.
-- **Files and people:** `files_upload` (up to 5 MB, same policy), `users_info` (full profile with custom fields), `users_set_status`, `reminders` (list, add, delete), `emoji_search`.
+- **Files and people:** `files_upload` (up to 5 MB, same policy), `users_info` (full profile with custom fields), `users_set_status`, `reminders_add` (Slack's API can no longer list or delete reminders), `emoji_search`.
 - **Channels:** `conversations_create` (channel, DM or group DM), `conversations_info`, `conversations_members`, `conversations_invite`, `conversations_set_topic` (topic and purpose), `pins` (list, add, remove), `reactions_get`.
 - **Canvases:** `canvases_create` (standalone or a channel's canvas), `canvases_read`, `canvases_edit`, `canvases_sections_lookup`, `canvases_delete`. Writes need `SLACK_MCP_CANVAS_TOOL=true`.
 - **Lists:** `lists_create`, `lists_update`, `lists_items_list`, `lists_item_get`, `lists_items_create`, `lists_items_update`, `lists_items_delete`. Writes need `SLACK_MCP_LISTS_TOOL=true`.

@@ -302,7 +302,7 @@ func NewMCPServer(registry *provider.Registry, logger *zap.Logger, enabledTools 
 	)
 	// Only register search tool for non-bot tokens (bot tokens cannot use search.messages API)
 	if hasUserToken && shouldAddTool(ToolConversationsSearchMessages, enabledTools, "") {
-		s.AddTool(conversationsSearchTool, conversationsHandler.ConversationsSearchHandler)
+		addTool(s, registry, conversationsSearchTool, conversationsHandler.ConversationsSearchHandler)
 	}
 
 	if shouldAddTool(ToolUsersSearch, enabledTools, "") {

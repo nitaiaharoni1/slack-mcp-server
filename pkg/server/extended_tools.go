@@ -42,7 +42,7 @@ const (
 	ToolReactionsGet            = "reactions_get"
 	ToolEmojiSearch             = "emoji_search"
 	ToolPins                    = "pins"
-	ToolReminders               = "reminders"
+	ToolRemindersAdd            = "reminders_add"
 	ToolUsersSetStatus          = "users_set_status"
 )
 
@@ -335,15 +335,12 @@ func registerExtendedTools(s *server.MCPServer, registry *provider.Registry, ena
 		mcp.WithString("timestamp", mcp.Description("ts of the message; required for add and remove.")),
 	), convs.PinsHandler)
 
-	add(ToolReminders, "", mcp.NewTool(ToolReminders,
-		mcp.WithDescription("List, add or delete the account user's own Slack reminders."),
-		mcp.WithTitleAnnotation("Reminders"),
-		mcp.WithDestructiveHintAnnotation(true),
-		mcp.WithString("action", mcp.DefaultString("list"), mcp.Description("list, add or delete.")),
-		mcp.WithString("text", mcp.Description("Reminder text; required for add.")),
-		mcp.WithString("time", mcp.Description(`When; required for add. Unix seconds, or natural language Slack understands, e.g. "in 15 minutes" or "every Thursday at 9am".`)),
-		mcp.WithString("reminder_id", mcp.Description("Required for delete.")),
-	), convs.RemindersHandler)
+	add(ToolRemindersAdd, "SLACK_MCP_ADD_MESSAGE_TOOL", mcp.NewTool(ToolRemindersAdd,
+		mcp.WithDescription("Set a Slack reminder for the account user; Slackbot delivers it. Slack's API cannot list or delete reminders any more (the id add returns is unknown to reminders.info, list and delete), so the user manages them in Slack's Later view."),
+		mcp.WithTitleAnnotation("Add Reminder"),
+		mcp.WithString("text", mcp.Required(), mcp.Description("Reminder text.")),
+		mcp.WithString("time", mcp.Required(), mcp.Description(`When: Unix seconds, or natural language Slack understands, e.g. "in 15 minutes" or "every Thursday at 9am".`)),
+	), convs.RemindersAddHandler)
 
 	add(ToolUsersSetStatus, "SLACK_MCP_ADD_MESSAGE_TOOL", mcp.NewTool(ToolUsersSetStatus,
 		mcp.WithDescription("Set or clear the account user's Slack status. Empty text and emoji clear it."),

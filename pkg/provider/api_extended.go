@@ -42,8 +42,6 @@ type ExtendedSlackAPI interface {
 	RemovePinContext(ctx context.Context, channel string, item slack.ItemRef) error
 	ListPinsContext(ctx context.Context, channel string) ([]slack.Item, *slack.Paging, error)
 	AddUserReminderContext(ctx context.Context, userID, text, time string) (*slack.Reminder, error)
-	ListRemindersContext(ctx context.Context) ([]*slack.Reminder, error)
-	DeleteReminderContext(ctx context.Context, id string) error
 	SetUserCustomStatusContext(ctx context.Context, statusText, statusEmoji string, statusExpiration int64) error
 	APICall(ctx context.Context, method string, body any, out any) error
 }
@@ -64,8 +62,14 @@ func (c *MCPSlackClient) GetScheduledMessagesContext(ctx context.Context, params
 	return c.slackClient.GetScheduledMessagesContext(ctx, params)
 }
 
+// DeleteScheduledMessageContext skips slack-go's version, which always sends
+// as_user: Slack now rejects that deprecated argument with invalid_arguments.
 func (c *MCPSlackClient) DeleteScheduledMessageContext(ctx context.Context, params *slack.DeleteScheduledMessageParameters) (bool, error) {
-	return c.slackClient.DeleteScheduledMessageContext(ctx, params)
+	err := c.APICall(ctx, "chat.deleteScheduledMessage", map[string]string{
+		"channel":              params.Channel,
+		"scheduled_message_id": params.ScheduledMessageID,
+	}, nil)
+	return err == nil, err
 }
 
 func (c *MCPSlackClient) GetPermalinkContext(ctx context.Context, params *slack.PermalinkParameters) (string, error) {
@@ -146,14 +150,6 @@ func (c *MCPSlackClient) ListPinsContext(ctx context.Context, channel string) ([
 
 func (c *MCPSlackClient) AddUserReminderContext(ctx context.Context, userID, text, time string) (*slack.Reminder, error) {
 	return c.slackClient.AddUserReminderContext(ctx, userID, text, time)
-}
-
-func (c *MCPSlackClient) ListRemindersContext(ctx context.Context) ([]*slack.Reminder, error) {
-	return c.slackClient.ListRemindersContext(ctx)
-}
-
-func (c *MCPSlackClient) DeleteReminderContext(ctx context.Context, id string) error {
-	return c.slackClient.DeleteReminderContext(ctx, id)
 }
 
 func (c *MCPSlackClient) SetUserCustomStatusContext(ctx context.Context, statusText, statusEmoji string, statusExpiration int64) error {
