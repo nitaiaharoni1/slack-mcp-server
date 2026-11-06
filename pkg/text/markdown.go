@@ -2,6 +2,7 @@ package text
 
 import (
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode"
@@ -40,11 +41,12 @@ var (
 	// Tokens that carry no reading direction of their own.
 	noDirRe       = regexp.MustCompile("`[^`]*`|<[^>]*>|\\]\\([^)]*\\)|https?://\\S+|:[a-z0-9_+-]+:")
 	mdLinkRe      = regexp.MustCompile(`!?\[([^\]]*)\]\([^)]*\)`)
-	inlineMarksRe = regexp.MustCompile("\\*\\*|__|~~|`")
+	mdUnderBoldRe = regexp.MustCompile(`__(.+?)__`)
 	mdBoldRe      = regexp.MustCompile(`\*\*(.+?)\*\*`)
-	mdItalicRe    = regexp.MustCompile(`\*([^*\s][^*]*)\*`)
+	mdItalicRe    = regexp.MustCompile(`\*([^*\s][^*\n]*)\*`)
 	mdStrikeRe    = regexp.MustCompile(`~~(.+?)~~`)
 	mdLinkPartsRe = regexp.MustCompile(`\[([^\]]+)\]\(([^)\s]+)\)`)
+	linkTokenRe   = regexp.MustCompile(`<[^>\n]*>|https?://[^\s<>]+`)
 )
 
 var manualBullets = []string{"●", "○", "▪"}
@@ -86,14 +88,18 @@ func BidiLines(s string) string {
 // notifications and previews of a message whose body is a markdown block.
 func MarkdownFallback(md string) string {
 	var out []string
-	inFence := false
+	fence := ""
 	for _, line := range strings.Split(strings.ReplaceAll(md, "\r\n", "\n"), "\n") {
 		bare := stripMarks(line)
-		if fenceRe.MatchString(bare) {
-			inFence = !inFence
+		if marker, ok := fenceOpen(bare); fence == "" && ok {
+			fence = marker
 			continue
 		}
-		if !inFence {
+		if fence != "" && isFenceClose(bare, fence) {
+			fence = ""
+			continue
+		}
+		if fence == "" {
 			if isHR(bare) || tableSepRe.MatchString(strings.TrimSpace(bare)) && strings.Contains(bare, "-") {
 				continue
 			}
@@ -107,7 +113,13 @@ func MarkdownFallback(md string) string {
 				bare = strings.Join(tableCells(bare), " | ")
 			}
 			bare = mdLinkRe.ReplaceAllString(bare, "$1")
-			bare = inlineMarksRe.ReplaceAllString(bare, "")
+			bare = outside(literalSpans(bare), bare, func(part string) string {
+				for _, re := range []*regexp.Regexp{mdBoldRe, mdUnderBoldRe, mdStrikeRe} {
+					part = re.ReplaceAllString(part, "$1")
+				}
+				return part
+			})
+			bare = replaceSpans(bare, codeSpans(bare), func(code string) string { return strings.Trim(code, "`") })
 		}
 		out = append(out, bare)
 	}
@@ -117,11 +129,97 @@ func MarkdownFallback(md string) string {
 // InlineMrkdwn converts markdown's inline styles to Slack's mrkdwn and marks each
 // line's direction, for text that cannot be a markdown block.
 func InlineMrkdwn(s string) string {
-	s = mdBoldRe.ReplaceAllString(s, "\x00$1\x00")
-	s = mdItalicRe.ReplaceAllString(s, "_${1}_")
-	s = mdStrikeRe.ReplaceAllString(s, "~$1~")
 	s = mdLinkPartsRe.ReplaceAllString(s, "<$2|$1>")
-	return BidiLines(strings.ReplaceAll(s, "\x00", "*"))
+	s = outside(literalSpans(s), s, func(part string) string {
+		part = mdBoldRe.ReplaceAllString(part, "\x00$1\x00")
+		part = mdItalicRe.ReplaceAllString(part, "_${1}_")
+		part = mdStrikeRe.ReplaceAllString(part, "~$1~")
+		return strings.ReplaceAll(part, "\x00", "*")
+	})
+	return BidiLines(s)
+}
+
+// codeSpans returns the [start, end) of each code span in s: a run of
+// backticks, up to the next run of the same length.
+func codeSpans(s string) [][]int {
+	run := func(i int) int {
+		j := i
+		for j < len(s) && s[j] == '`' {
+			j++
+		}
+		return j - i
+	}
+	var spans [][]int
+	for i := 0; i < len(s); {
+		if s[i] != '`' {
+			i++
+			continue
+		}
+		n, end := run(i), -1
+		for j := i + n; j < len(s); {
+			if s[j] != '`' {
+				j++
+				continue
+			}
+			m := run(j)
+			if m == n {
+				end = j + m
+				break
+			}
+			j += m
+		}
+		if end < 0 {
+			i += n
+			continue
+		}
+		spans = append(spans, []int{i, end})
+		i = end
+	}
+	return spans
+}
+
+// literalSpans returns the spans of s that markdown styling never applies
+// inside: code, <...> tokens and bare URLs.
+func literalSpans(s string) [][]int {
+	spans := codeSpans(s)
+	code := len(spans)
+	for _, m := range linkTokenRe.FindAllStringIndex(s, -1) {
+		inCode := false
+		for _, c := range spans[:code] {
+			inCode = inCode || m[0] < c[1] && c[0] < m[1]
+		}
+		if !inCode {
+			spans = append(spans, m)
+		}
+	}
+	sort.Slice(spans, func(i, j int) bool { return spans[i][0] < spans[j][0] })
+	return spans
+}
+
+// outside applies fn to the parts of s between spans.
+func outside(spans [][]int, s string, fn func(string) string) string {
+	var b strings.Builder
+	last := 0
+	for _, m := range spans {
+		b.WriteString(fn(s[last:m[0]]))
+		b.WriteString(s[m[0]:m[1]])
+		last = m[1]
+	}
+	b.WriteString(fn(s[last:]))
+	return b.String()
+}
+
+// replaceSpans applies fn to each span of s.
+func replaceSpans(s string, spans [][]int, fn func(string) string) string {
+	var b strings.Builder
+	last := 0
+	for _, m := range spans {
+		b.WriteString(s[last:m[0]])
+		b.WriteString(fn(s[m[0]:m[1]]))
+		last = m[1]
+	}
+	b.WriteString(s[last:])
+	return b.String()
 }
 
 // prepareLines processes one run of markdown lines. base is the direction of
@@ -131,7 +229,7 @@ func prepareLines(lines []string, base direction) ([]string, direction) {
 	for i := 0; i < len(lines); {
 		bare := stripMarks(lines[i])
 		switch {
-		case fenceRe.MatchString(bare):
+		case isFence(bare):
 			end := fenceEnd(lines, i)
 			out = append(out, bare)
 			out = append(out, lines[i+1:end]...)
@@ -230,8 +328,25 @@ func renderList(lines []string, base direction) ([]string, direction) {
 	}
 	var stack []level
 	var out []string
+	fence, fenceIndent := "", 0 // a code block inside an item
 	for _, line := range lines {
 		bare := stripMarks(line)
+		trimmed := strings.TrimLeft(bare, " \t")
+		inCode := fence != ""
+		if !inCode {
+			if marker, ok := fenceOpen(trimmed); ok {
+				fence, fenceIndent, inCode = marker, len(line)-len(strings.TrimLeft(line, " \t")), true
+			}
+		} else if isFenceClose(trimmed, fence) {
+			fence = ""
+		}
+		if inCode { // code is never marked; written-out items drop its indentation
+			if manual {
+				line = line[min(fenceIndent, len(line)-len(strings.TrimLeft(line, " \t"))):]
+			}
+			out = append(out, line)
+			continue
+		}
 		if strings.TrimSpace(bare) == "" {
 			out = append(out, "")
 			continue
@@ -270,8 +385,6 @@ func renderList(lines []string, base direction) ([]string, direction) {
 		top := &stack[len(stack)-1]
 		var label string
 		switch {
-		case m[4] != "":
-			label = strings.TrimSpace(m[4])
 		case isOrdered:
 			top.n++
 			var nums []string
@@ -281,8 +394,11 @@ func renderList(lines []string, base direction) ([]string, direction) {
 				}
 			}
 			label = strings.Join(nums, ".") + "."
-		default:
+		case m[4] == "":
 			label = manualBullets[min(len(stack)-1, len(manualBullets)-1)]
+		}
+		if m[4] != "" { // a task: its checkbox, after the number of a numbered one
+			label = strings.TrimSpace(label + " " + strings.TrimSpace(m[4]))
 		}
 		// The mark also keeps markdown from reading the line as a list item.
 		mark := lrm
@@ -398,15 +514,48 @@ func markLine(s string, dir, base direction) string {
 // wrapMarks puts mark at both ends of s. Next to a bold, italic or strike
 // delimiter the mark goes inside it: markdown ignores a delimiter that has a
 // mark on its outer side and punctuation on its inner side.
+//
+// A mark never touches a URL: Slack takes a mark after a URL into the link,
+// and does not link a URL with a mark in front of it. So the opening mark goes
+// after a URL that starts the line, and a line that ends in one gets no
+// closing mark.
 func wrapMarks(s, mark string) string {
 	body := strings.TrimRight(s, " \t\\")
 	tail := s[len(body):]
 	if mark == rlm {
-		body = mentionRe.ReplaceAllString(body, lrm+"$1")
+		// Marks around code that is not Hebrew keep it in order without changing it.
+		body = replaceSpans(body, codeSpans(body), func(code string) string {
+			if lineDir(strings.Trim(code, "`")) == dirRTL {
+				return code
+			}
+			return lrm + code + lrm
+		})
+		body = outside(codeSpans(body), body, func(part string) string { return mentionRe.ReplaceAllString(part, lrm+"$1") })
 	}
+	// Only a delimiter with a partner on the line is emphasis.
 	lead := leadDelimRe.FindString(body)
-	trail := tailDelimRe.FindString(body[len(lead):])
-	return lead + mark + body[len(lead):len(body)-len(trail)] + mark + trail + tail
+	if !strings.Contains(body[len(lead):], lead) {
+		lead = ""
+	}
+	rest := body[len(lead):]
+	trail := tailDelimRe.FindString(rest)
+	if !strings.Contains(rest[:len(rest)-len(trail)], trail) {
+		trail = ""
+	}
+	inner := rest[:len(rest)-len(trail)]
+
+	before, after, open, closing := "", inner, mark, mark
+	if strings.HasPrefix(inner, "http://") || strings.HasPrefix(inner, "https://") {
+		if i := strings.IndexAny(inner, " \t"); i >= 0 {
+			before, after = inner[:i+1], inner[i+1:]
+		} else {
+			open = ""
+		}
+	}
+	if words := strings.Fields(after); len(words) == 0 || strings.Contains(words[len(words)-1], "://") {
+		closing = ""
+	}
+	return lead + before + open + after + closing + trail + tail
 }
 
 // lineDir is the reading direction of a line: right to left once at least a
@@ -471,7 +620,7 @@ func listEnd(lines []string, i int) int {
 	for j := i + 1; j < len(lines); j++ {
 		bare := stripMarks(lines[j])
 		switch {
-		case fenceRe.MatchString(bare):
+		case isFence(bare):
 			return end
 		case strings.TrimSpace(bare) == "":
 			blank = true
@@ -481,6 +630,9 @@ func listEnd(lines []string, i int) int {
 				return end
 			}
 		case strings.HasPrefix(bare, "  "), strings.HasPrefix(bare, "\t"):
+			if marker, ok := fenceOpen(strings.TrimLeft(bare, " \t")); ok {
+				j = fenceClose(lines, j, marker) - 1 // the code block, whatever its lines' indentation
+			}
 		default:
 			return end
 		}
@@ -505,15 +657,42 @@ func startsNewList(first, item []string) bool {
 	return lineDir(item[5]) != lineDir(first[5])
 }
 
-// fenceEnd returns the index after the code fence that opens at lines[i].
-func fenceEnd(lines []string, i int) int {
-	open := fenceRe.FindStringSubmatch(stripMarks(lines[i]))[1]
+// fenceOpen returns the fence that opens a code block on line. A backtick
+// fence's info string cannot hold a backtick, or it is inline code.
+func fenceOpen(line string) (string, bool) {
+	m := fenceRe.FindStringSubmatch(line)
+	if m == nil || m[1][0] == '`' && strings.Contains(line[len(m[0]):], "`") {
+		return "", false
+	}
+	return m[1], true
+}
+
+func isFence(line string) bool {
+	_, ok := fenceOpen(line)
+	return ok
+}
+
+// isFenceClose reports a line that closes the code block opened by fence: the
+// same character, at least as many, and nothing after it.
+func isFenceClose(line, fence string) bool {
+	m := fenceRe.FindStringSubmatch(strings.TrimLeft(line, " \t"))
+	return m != nil && m[1][0] == fence[0] && len(m[1]) >= len(fence) && strings.TrimSpace(strings.TrimLeft(line, " \t")[len(m[0]):]) == ""
+}
+
+// fenceClose returns the index after the code block whose fence opens at lines[i].
+func fenceClose(lines []string, i int, fence string) int {
 	for j := i + 1; j < len(lines); j++ {
-		if m := fenceRe.FindStringSubmatch(stripMarks(lines[j])); m != nil && m[1][0] == open[0] && len(m[1]) >= len(open) {
+		if isFenceClose(stripMarks(lines[j]), fence) {
 			return j + 1
 		}
 	}
 	return len(lines)
+}
+
+// fenceEnd returns the index after the code block that opens at lines[i].
+func fenceEnd(lines []string, i int) int {
+	fence, _ := fenceOpen(stripMarks(lines[i]))
+	return fenceClose(lines, i, fence)
 }
 
 // isIndentedCode reports a line indented as a code block: four spaces or a

@@ -281,8 +281,17 @@ func (ch *ConversationsHandler) messageContentOptions(params *addMessageParams) 
 	} else {
 		switch params.contentType {
 		case "text/plain":
-			options = append(options, slack.MsgOptionDisableMarkdown())
-			options = append(options, slack.MsgOptionText(text.BidiLines(params.text), false))
+			if strings.TrimSpace(params.text) == "" {
+				return nil, errors.New("text is required")
+			}
+			body := text.BidiLines(params.text)
+			options = append(options, slack.MsgOptionText(body, false))
+			// Slack formats *, _ and ~ in message text even with mrkdwn off, so
+			// the text also goes in a rich text block, which shows it as written.
+			// Slack refuses a block much longer than a markdown block's limit.
+			if utf8.RuneCountInString(body) <= text.MaxMarkdownChars {
+				options = append(options, slack.MsgOptionBlocks(plainTextBlock(body)))
+			}
 		case "text/markdown":
 			block, err := markdownBlock(params.text)
 			if err != nil {
@@ -308,12 +317,66 @@ func (ch *ConversationsHandler) messageContentOptions(params *addMessageParams) 
 
 // markdownBlock builds the Slack markdown block for a message body. Slack parses
 // the markdown itself, including headings, lists, tables and dividers.
-func markdownBlock(markdown string) (*slack.MarkdownBlock, error) {
-	prepared := text.PrepareMarkdown(markdown)
-	if n := utf8.RuneCountInString(prepared); n > text.MaxMarkdownChars {
-		return nil, fmt.Errorf("the message is %d characters once formatted and Slack allows %d: split it into several messages, or send it as a file with files_upload", n, text.MaxMarkdownChars)
+// plainTokenRe matches what plain text still turns into elements: mentions,
+// channel and broadcast references, Slack links and bare URLs.
+var plainTokenRe = regexp.MustCompile(`<([@#!])([^>|]+)(?:\|([^>]*))?>|<((?:https?|mailto):[^>|]+)(?:\|([^>]*))?>|https?://[^\s<>\x{200e}\x{200f}]*[^\s<>\x{200e}\x{200f}.,;:!?)\]'"]`)
+
+// plainTextBlock is a rich text block that shows s as written, with its
+// mentions and links working.
+func plainTextBlock(s string) *slack.RichTextBlock {
+	var elems []slack.RichTextSectionElement
+	last := 0
+	for _, m := range plainTokenRe.FindAllStringSubmatchIndex(s, -1) {
+		if m[0] > last {
+			elems = append(elems, slack.NewRichTextSectionTextElement(s[last:m[0]], nil))
+		}
+		group := func(i int) string {
+			if m[2*i] < 0 {
+				return ""
+			}
+			return s[m[2*i]:m[2*i+1]]
+		}
+		switch id := group(2); {
+		case group(1) == "@":
+			elems = append(elems, slack.NewRichTextSectionUserElement(id, nil))
+		case group(1) == "#":
+			elems = append(elems, slack.NewRichTextSectionChannelElement(id, nil))
+		case group(1) == "!" && (id == "here" || id == "channel" || id == "everyone"):
+			elems = append(elems, slack.NewRichTextSectionBroadcastElement(id))
+		case group(1) == "!" && strings.HasPrefix(id, "subteam^"):
+			elems = append(elems, slack.NewRichTextSectionUserGroupElement(strings.TrimPrefix(id, "subteam^")))
+		case group(1) == "!": // a date or another special: its fallback text
+			label := group(3)
+			if label == "" {
+				label = s[m[0]:m[1]]
+			}
+			elems = append(elems, slack.NewRichTextSectionTextElement(label, nil))
+		case group(4) != "":
+			elems = append(elems, slack.NewRichTextSectionLinkElement(group(4), group(5), nil))
+		default:
+			elems = append(elems, slack.NewRichTextSectionLinkElement(s[m[0]:m[1]], "", nil))
+		}
+		last = m[1]
 	}
-	return slack.NewMarkdownBlock("", prepared), nil
+	if last < len(s) {
+		elems = append(elems, slack.NewRichTextSectionTextElement(s[last:], nil))
+	}
+	return slack.NewRichTextBlock("", slack.NewRichTextSection(elems...))
+}
+
+func markdownBlock(markdown string) (*slack.MarkdownBlock, error) {
+	if strings.TrimSpace(markdown) == "" {
+		return nil, errors.New("text is required")
+	}
+	// Far too long input is refused before it is prepared.
+	n := utf8.RuneCountInString(markdown)
+	if n <= 2*text.MaxMarkdownChars {
+		prepared := text.PrepareMarkdown(markdown)
+		if n = utf8.RuneCountInString(prepared); n <= text.MaxMarkdownChars {
+			return slack.NewMarkdownBlock("", prepared), nil
+		}
+	}
+	return nil, fmt.Errorf("the message is %d characters with its direction marks and Slack allows %d: split it into several messages, or send it as a file with files_upload", n, text.MaxMarkdownChars)
 }
 
 // ReactionsAddHandler adds an emoji reaction to a message
@@ -477,8 +540,9 @@ func (ch *ConversationsHandler) FilesGetHandler(ctx context.Context, request mcp
 		return nil, fmt.Errorf("file size %d bytes exceeds the %d bytes this tool returns inline: save it to disk with files_download", fileInfo.Size, maxFileSizeBytes)
 	}
 
+	// The size Slack reports can be missing or wrong, so the read is capped too.
 	var buf bytes.Buffer
-	if _, err := ch.fetchFile(ctx, fileInfo, &buf); err != nil {
+	if _, err := ch.fetchFile(ctx, fileInfo, &buf, maxFileSizeBytes); err != nil {
 		ch.logger.Error("Slack GetFileContext failed", zap.Error(err))
 		return nil, err
 	}
@@ -511,7 +575,8 @@ func (ch *ConversationsHandler) FilesGetHandler(ctx context.Context, request mcp
 
 // fetchFile writes a file's content to w and checks that all of it arrived. A
 // token without files:read gets an HTML login page with a 200 status instead.
-func (ch *ConversationsHandler) fetchFile(ctx context.Context, file *slack.File, w io.Writer) (int64, error) {
+// fetchFile downloads a file into w, reading at most limit bytes when limit > 0.
+func (ch *ConversationsHandler) fetchFile(ctx context.Context, file *slack.File, w io.Writer, limit int64) (int64, error) {
 	downloadURL := file.URLPrivateDownload
 	if downloadURL == "" {
 		downloadURL = file.URLPrivate
@@ -519,22 +584,39 @@ func (ch *ConversationsHandler) fetchFile(ctx context.Context, file *slack.File,
 	if downloadURL == "" {
 		return 0, errors.New("file has no downloadable URL")
 	}
-	counter := &countingWriter{w: w}
+	counter := &countingWriter{w: w, max: limit}
 	if err := ch.ap(ctx).Slack().GetFileContext(ctx, downloadURL, counter); err != nil {
+		if errors.Is(err, errFileTooLarge) {
+			return counter.n, fmt.Errorf("%s is over the %d bytes this tool returns inline: save it to disk with files_download", file.ID, limit)
+		}
 		return counter.n, err
 	}
-	if file.Mimetype != slackDocsMimetype && file.Size > 0 && counter.n != int64(file.Size) {
-		return counter.n, fmt.Errorf("download of %s returned %d bytes instead of %d: check that the token has the files:read scope", file.ID, counter.n, file.Size)
+	// Without files:read, Slack answers with its sign-in page instead of the file.
+	head := strings.ToLower(strings.TrimSpace(string(counter.head)))
+	isPage := strings.HasPrefix(head, "<!doctype html") || strings.HasPrefix(head, "<html")
+	if isPage && file.Mimetype != "text/html" ||
+		file.Mimetype != slackDocsMimetype && file.Size > 0 && counter.n != int64(file.Size) {
+		return counter.n, fmt.Errorf("download of %s returned a web page or the wrong size (%d bytes, expected %d): check that the token has the files:read scope", file.ID, counter.n, file.Size)
 	}
 	return counter.n, nil
 }
 
+var errFileTooLarge = errors.New("file is larger than the limit")
+
 type countingWriter struct {
-	w io.Writer
-	n int64
+	w    io.Writer
+	n    int64
+	max  int64  // 0: no limit
+	head []byte // the first bytes, to recognize an HTML page
 }
 
 func (c *countingWriter) Write(p []byte) (int, error) {
+	if c.max > 0 && c.n+int64(len(p)) > c.max {
+		return 0, errFileTooLarge
+	}
+	if len(c.head) < 64 {
+		c.head = append(c.head, p[:min(len(p), 64-len(c.head))]...)
+	}
 	n, err := c.w.Write(p)
 	c.n += int64(n)
 	return n, err
@@ -1524,13 +1606,79 @@ func isChannelAllowedForConfig(channel, config string) bool {
 	return isNegated
 }
 
-func isChannelAllowed(channel string) bool {
-	return isChannelAllowedForConfig(channel, os.Getenv("SLACK_MCP_ADD_MESSAGE_TOOL"))
+// errNotAllowed is returned by policyChannel when the channel policy refuses.
+var errNotAllowed = errors.New("not allowed by the channel policy")
+
+// channelAllowed applies a channel policy (true, a list of IDs, or a list of
+// !IDs) to every name of one conversation: a user ID and its DM ID count alike.
+func channelAllowed(config string, ids ...string) bool {
+	if config == "" || config == "true" || config == "1" {
+		return true
+	}
+	denylist := strings.HasPrefix(strings.TrimSpace(strings.Split(config, ",")[0]), "!")
+	for _, id := range ids {
+		if id == "" {
+			continue
+		}
+		allowed := isChannelAllowedForConfig(id, config)
+		if denylist && !allowed {
+			return false
+		}
+		if !denylist && allowed {
+			return true
+		}
+	}
+	return denylist
 }
 
+// policyChannel resolves the channel of a write under a channel policy. The
+// policy sees the argument as given and the conversation it names, and a DM
+// is opened only once the policy allows the write.
+func (ch *ConversationsHandler) policyChannel(ctx context.Context, raw, config string) (string, error) {
+	if raw == "" {
+		return "", errors.New("channel_id is required")
+	}
+	ids := []string{raw}
+	if config != "" && config != "true" && config != "1" { // a list: check before anything is created
+		if known, err := ch.resolveChannelID(ctx, raw); err == nil {
+			ids = append(ids, known)
+		}
+		if !channelAllowed(config, ids...) {
+			return "", errNotAllowed
+		}
+	}
+	channel, err := ch.openChannelID(ctx, raw)
+	if err != nil {
+		return "", err
+	}
+	if !channelAllowed(config, append(ids, channel)...) {
+		return "", errNotAllowed
+	}
+	return channel, nil
+}
+
+// resolveChannelID turns a channel argument into a conversation ID without
+// creating anything: a user ID or @handle names their DM only if it exists.
 func (ch *ConversationsHandler) resolveChannelID(ctx context.Context, channel string) (string, error) {
+	return ch.resolveChannel(ctx, channel, false)
+}
+
+// openChannelID is resolveChannelID for writes: a user ID or @handle with no
+// DM yet gets one opened.
+func (ch *ConversationsHandler) openChannelID(ctx context.Context, channel string) (string, error) {
+	return ch.resolveChannel(ctx, channel, true)
+}
+
+func (ch *ConversationsHandler) resolveChannel(ctx context.Context, channel string, open bool) (string, error) {
 	if isSlackUserIDPrefix(channel) {
-		return ch.openDM(ctx, channel)
+		if open {
+			return ch.openDM(ctx, channel)
+		}
+		user, ok := ch.ap(ctx).ProvideUsersMap().Users[channel]
+		if !ok {
+			return "", fmt.Errorf("user %s not found", channel)
+		}
+		channel = "@" + user.Name
 	}
 	if !strings.HasPrefix(channel, "#") && !strings.HasPrefix(channel, "@") {
 		return channel, nil
@@ -1570,6 +1718,9 @@ func (ch *ConversationsHandler) resolveChannelID(ctx context.Context, channel st
 	if !ok {
 		// A person with no DM yet has no channel in the cache.
 		if strings.HasPrefix(channel, "@") {
+			if !open {
+				return "", fmt.Errorf("no DM with %s yet: pass the DM's channel ID, or send them a message first", channel)
+			}
 			if user, err := ch.resolveUserID(ctx, channel); err == nil {
 				return ch.openDM(ctx, user)
 			}
@@ -1772,15 +1923,7 @@ func (ch *ConversationsHandler) parseParamsToolConversations(ctx context.Context
 		}
 	}
 
-	if isSlackUserIDPrefix(channel) {
-		dm, err := ch.openDM(ctx, channel)
-		if err != nil {
-			return nil, err
-		}
-		channel = dm
-	}
-
-	if strings.HasPrefix(channel, "#") || strings.HasPrefix(channel, "@") {
+	if isSlackUserIDPrefix(channel) || strings.HasPrefix(channel, "#") || strings.HasPrefix(channel, "@") {
 		if ready, err := ch.ap(ctx).IsReady(); !ready {
 			if errors.Is(err, provider.ErrUsersNotReady) {
 				ch.logger.Warn(
@@ -1836,14 +1979,15 @@ func (ch *ConversationsHandler) parseParamsToolAddMessage(ctx context.Context, r
 		ch.logger.Error("channel_id missing in add-message params")
 		return nil, errors.New("channel_id must be a string")
 	}
-	channel, err := ch.resolveChannelID(ctx, channel)
-	if err != nil {
-		ch.logger.Error("Channel not found", zap.String("channel", channel), zap.Error(err))
-		return nil, err
+	raw := channel
+	channel, err := ch.policyChannel(ctx, raw, os.Getenv("SLACK_MCP_ADD_MESSAGE_TOOL"))
+	if errors.Is(err, errNotAllowed) {
+		ch.logger.Warn("Add-message tool not allowed for channel", zap.String("channel", raw), zap.String("policy", toolConfig))
+		return nil, fmt.Errorf("conversations_add_message tool is not allowed for channel %q, applied policy: %s", raw, toolConfig)
 	}
-	if !isChannelAllowed(channel) {
-		ch.logger.Warn("Add-message tool not allowed for channel", zap.String("channel", channel), zap.String("policy", toolConfig))
-		return nil, fmt.Errorf("conversations_add_message tool is not allowed for channel %q, applied policy: %s", channel, toolConfig)
+	if err != nil {
+		ch.logger.Error("Channel not found", zap.String("channel", raw), zap.Error(err))
+		return nil, err
 	}
 
 	threadTs := request.GetString("thread_ts", "")
@@ -1936,14 +2080,15 @@ func (ch *ConversationsHandler) parseParamsToolReaction(ctx context.Context, req
 	if channel == "" {
 		return nil, errors.New("channel_id is required")
 	}
-	channel, err := ch.resolveChannelID(ctx, channel)
-	if err != nil {
-		ch.logger.Error("Channel not found", zap.String("channel", channel), zap.Error(err))
-		return nil, err
+	raw := channel
+	channel, err := ch.policyChannel(ctx, raw, toolConfig)
+	if errors.Is(err, errNotAllowed) {
+		ch.logger.Warn("Reactions tool not allowed for channel", zap.String("channel", raw), zap.String("policy", toolConfig))
+		return nil, fmt.Errorf("reactions tools are not allowed for channel %q, applied policy: %s", raw, toolConfig)
 	}
-	if !isChannelAllowedForConfig(channel, toolConfig) {
-		ch.logger.Warn("Reactions tool not allowed for channel", zap.String("channel", channel), zap.String("policy", toolConfig))
-		return nil, fmt.Errorf("reactions tools are not allowed for channel %q, applied policy: %s", channel, toolConfig)
+	if err != nil {
+		ch.logger.Error("Channel not found", zap.String("channel", raw), zap.Error(err))
+		return nil, err
 	}
 
 	timestamp := request.GetString("timestamp", "")

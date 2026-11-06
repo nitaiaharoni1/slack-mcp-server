@@ -202,7 +202,7 @@ func NewMCPServer(registry *provider.Registry, logger *zap.Logger, enabledTools 
 			),
 			mcp.WithString("content_type",
 				mcp.DefaultString("text/markdown"),
-				mcp.Description("Content type of the message. Default is 'text/markdown'. Allowed values: 'text/markdown', 'text/plain'. Ignored when blocks is provided."),
+				mcp.Description("Content type of the message. Default is 'text/markdown'. Allowed values: 'text/markdown', 'text/plain' (the text as written, with no formatting or :emoji: but with working mentions and links). Ignored when blocks is provided."),
 			),
 			mcp.WithString("blocks",
 				mcp.Description("Raw Slack Block Kit JSON array for rich message formatting (rich_text lists, code blocks, etc.). When provided, this takes precedence over text/content_type for rendering. The text parameter becomes the notification fallback text."),
@@ -600,7 +600,7 @@ func NewMCPServer(registry *provider.Registry, logger *zap.Logger, enabledTools 
 		}
 	}
 
-	registerExtendedTools(s, registry, enabledTools, conversationsHandler, handler.NewCanvasesHandler(registry, conversationsHandler, logger))
+	registerExtendedTools(s, registry, enabledTools, hasUserToken, conversationsHandler, handler.NewCanvasesHandler(registry, conversationsHandler, logger))
 
 	for _, ap := range registry.All() {
 		addAccountResources(s, ap, logger, channelsHandler, conversationsHandler)

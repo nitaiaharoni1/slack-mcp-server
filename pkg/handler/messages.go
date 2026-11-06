@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
@@ -16,6 +17,7 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/nitaiaharoni1/slack-mcp-server/pkg/limiter"
 	"github.com/nitaiaharoni1/slack-mcp-server/pkg/text"
 	"github.com/slack-go/slack"
 	"go.uber.org/zap"
@@ -31,17 +33,11 @@ func (ch *ConversationsHandler) writableChannel(ctx context.Context, raw, tool s
 	if policy == "" && !strings.Contains(os.Getenv("SLACK_MCP_ENABLED_TOOLS"), tool) {
 		return "", fmt.Errorf("%s is disabled: set SLACK_MCP_ADD_MESSAGE_TOOL to true, or to the channels it may write to", tool)
 	}
-	if raw == "" {
-		return "", errors.New("channel_id is required")
+	channel, err := ch.policyChannel(ctx, raw, policy)
+	if errors.Is(err, errNotAllowed) {
+		return "", fmt.Errorf("%s is not allowed for channel %q, applied policy: %s", tool, raw, policy)
 	}
-	channel, err := ch.resolveChannelID(ctx, raw)
-	if err != nil {
-		return "", err
-	}
-	if !isChannelAllowed(channel) {
-		return "", fmt.Errorf("%s is not allowed for channel %q, applied policy: %s", tool, channel, policy)
-	}
-	return channel, nil
+	return channel, err
 }
 
 func requireTS(name, ts string) error {
@@ -334,6 +330,36 @@ func summarizeFile(f slack.File) fileSummary {
 }
 
 // FilesListHandler lists files, newest first, optionally by channel, user or type.
+// FilesSearchHandler finds files by name, title and content (search.files).
+func (ch *ConversationsHandler) FilesSearchHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	ch.logger.Debug("FilesSearchHandler called", zap.Any("params", request.Params))
+	query := strings.TrimSpace(request.GetString("query", ""))
+	if query == "" {
+		return nil, errors.New("query is required")
+	}
+	sortBy := request.GetString("sort", "score")
+	if sortBy != "score" && sortBy != "timestamp" {
+		return nil, errors.New("sort must be score or timestamp")
+	}
+	params := slack.SearchParameters{
+		Sort:          sortBy,
+		SortDirection: "desc",
+		Count:         min(max(request.GetInt("limit", 20), 1), 100),
+		Page:          max(request.GetInt("page", 1), 1),
+	}
+	res, err := limiter.CallWithRetry(ctx, limiter.Tier2.Limiter(), 2, slackRetryAfter, func() (*slack.SearchFiles, error) {
+		return ch.ap(ctx).Slack().SearchFilesContext(ctx, query, params)
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]fileSummary, 0, len(res.Matches))
+	for _, f := range res.Matches {
+		out = append(out, summarizeFile(f))
+	}
+	return jsonResult(map[string]any{"files": out, "total": res.Paging.Total, "page": res.Paging.Page, "pages": res.Paging.Pages})
+}
+
 func (ch *ConversationsHandler) FilesListHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	ch.logger.Debug("FilesListHandler called", zap.Any("params", request.Params))
 	params := slack.GetFilesParameters{
@@ -426,23 +452,21 @@ func (ch *ConversationsHandler) FilesDownloadHandler(ctx context.Context, reques
 		return nil, err
 	}
 
-	// Download beside the target so a failed transfer leaves no partial file.
-	tmp, err := os.CreateTemp(filepath.Dir(target), ".slack-download-*")
+	// O_EXCL never replaces what is already there, a symlink included, even
+	// one created after downloadTarget looked.
+	out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o666)
+	if errors.Is(err, fs.ErrExist) {
+		return nil, fmt.Errorf("%s already exists: pass another save_path", target)
+	}
 	if err != nil {
 		return nil, err
 	}
-	defer os.Remove(tmp.Name())
-	size, err := ch.fetchFile(ctx, file, tmp)
-	if closeErr := tmp.Close(); err == nil {
+	size, err := ch.fetchFile(ctx, file, out, 0)
+	if closeErr := out.Close(); err == nil {
 		err = closeErr
 	}
 	if err != nil {
-		return nil, err
-	}
-	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
-		return nil, err
-	}
-	if err := os.Rename(tmp.Name(), target); err != nil {
+		os.Remove(target) // leave no partial file
 		return nil, err
 	}
 	return jsonResult(map[string]any{
@@ -465,7 +489,7 @@ func downloadTarget(rawPath string, file *slack.File) (string, error) {
 		}
 		target = filepath.Join(target, name)
 	}
-	if _, err := os.Stat(target); err == nil {
+	if _, err := os.Lstat(target); err == nil {
 		return "", fmt.Errorf("%s already exists: pass another save_path", target)
 	}
 	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {

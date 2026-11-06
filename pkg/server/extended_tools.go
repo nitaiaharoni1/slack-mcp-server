@@ -47,6 +47,7 @@ const (
 	ToolRemindersAdd            = "reminders_add"
 	ToolUsersSetStatus          = "users_set_status"
 	ToolFilesList               = "files_list"
+	ToolFilesSearch             = "files_search"
 	ToolFilesInfo               = "files_info"
 	ToolFilesDelete             = "files_delete"
 	ToolConversationsManage     = "conversations_manage"
@@ -59,7 +60,7 @@ func init() {
 	ValidToolNames = append(ValidToolNames,
 		ToolListAccounts, ToolMessagesUpdate, ToolMessagesDelete, ToolMessagesSchedule,
 		ToolMessagesScheduledList, ToolMessagesScheduledDelete, ToolMessagesPermalink, ToolMessagesForward,
-		ToolFilesUpload, ToolFilesDownload, ToolFilesList, ToolFilesInfo, ToolFilesDelete, ToolUsersInfo,
+		ToolFilesUpload, ToolFilesDownload, ToolFilesList, ToolFilesSearch, ToolFilesInfo, ToolFilesDelete, ToolUsersInfo,
 		ToolCanvasesCreate, ToolCanvasesRead, ToolCanvasesEdit, ToolCanvasesSectionsLookup, ToolCanvasesDelete,
 		ToolListsCreate, ToolListsItemsList, ToolListsItemGet, ToolListsItemsCreate, ToolListsItemsUpdate,
 		ToolListsItemsDelete, ToolListsUpdate,
@@ -82,7 +83,7 @@ func messageBodyArgs() []mcp.ToolOption {
 		),
 		mcp.WithString("content_type",
 			mcp.DefaultString("text/markdown"),
-			mcp.Description("Content type of the message: 'text/markdown' (default) or 'text/plain'. Ignored when blocks is provided."),
+			mcp.Description("Content type of the message: 'text/markdown' (default) or 'text/plain', which shows the text as written, with no formatting or :emoji: but with working mentions and links. Ignored when blocks is provided."),
 		),
 		mcp.WithString("blocks",
 			mcp.Description("Raw Slack Block Kit JSON array. Takes precedence over text/content_type for rendering; text becomes the notification fallback."),
@@ -90,7 +91,7 @@ func messageBodyArgs() []mcp.ToolOption {
 	}
 }
 
-func registerExtendedTools(s *server.MCPServer, registry *provider.Registry, enabledTools []string, convs *handler.ConversationsHandler, canvases *handler.CanvasesHandler) {
+func registerExtendedTools(s *server.MCPServer, registry *provider.Registry, enabledTools []string, hasUserToken bool, convs *handler.ConversationsHandler, canvases *handler.CanvasesHandler) {
 	add := func(name, writeEnv string, tool mcp.Tool, h server.ToolHandlerFunc) {
 		if shouldAddTool(name, enabledTools, writeEnv) {
 			addTool(s, registry, tool, h)
@@ -199,6 +200,19 @@ func registerExtendedTools(s *server.MCPServer, registry *provider.Registry, ena
 		mcp.WithNumber("limit", mcp.DefaultNumber(20), mcp.Description("Files per page.")),
 		mcp.WithNumber("page", mcp.DefaultNumber(1), mcp.Description("Page number, from 1.")),
 	), convs.FilesListHandler)
+
+	// search.files, like search.messages, needs a user token.
+	if hasUserToken {
+		add(ToolFilesSearch, "", mcp.NewTool(ToolFilesSearch,
+			mcp.WithDescription("Search files by name, title and content, canvases and Lists included. The query takes Slack's search modifiers, e.g. in:#channel, from:@person, before:2026-01-31, after:2026-01-01."),
+			mcp.WithTitleAnnotation("Search Files"),
+			mcp.WithReadOnlyHintAnnotation(true),
+			mcp.WithString("query", mcp.Required(), mcp.Description("What to search for, with optional modifiers.")),
+			mcp.WithString("sort", mcp.DefaultString("score"), mcp.Description("score (best match first) or timestamp (newest first).")),
+			mcp.WithNumber("limit", mcp.DefaultNumber(20), mcp.Description("Files per page, up to 100.")),
+			mcp.WithNumber("page", mcp.DefaultNumber(1), mcp.Description("Page number, from 1.")),
+		), convs.FilesSearchHandler)
+	}
 
 	add(ToolFilesInfo, "", mcp.NewTool(ToolFilesInfo,
 		mcp.WithDescription("Get a file's details: name, type, size, uploader, permalink, where it is shared. Use attachment_get_data to read its content, files_download to save it."),

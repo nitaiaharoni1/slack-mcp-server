@@ -117,6 +117,19 @@ func TestValidToolNames(t *testing.T) {
 			ToolSavedUpdate:                 true,
 			ToolSavedClearCompleted:         true,
 		}
+		for _, tool := range []string{
+			ToolListAccounts, ToolMessagesUpdate, ToolMessagesDelete, ToolMessagesSchedule,
+			ToolMessagesScheduledList, ToolMessagesScheduledDelete, ToolMessagesPermalink, ToolMessagesForward,
+			ToolFilesUpload, ToolFilesDownload, ToolFilesList, ToolFilesSearch, ToolFilesInfo, ToolFilesDelete, ToolUsersInfo,
+			ToolCanvasesCreate, ToolCanvasesRead, ToolCanvasesEdit, ToolCanvasesSectionsLookup, ToolCanvasesDelete,
+			ToolListsCreate, ToolListsItemsList, ToolListsItemGet, ToolListsItemsCreate, ToolListsItemsUpdate,
+			ToolListsItemsDelete, ToolListsUpdate,
+			ToolConversationsCreate, ToolConversationsInfo, ToolConversationsMembers, ToolConversationsInvite,
+			ToolConversationsSetTopic, ToolConversationsManage, ToolReactionsGet, ToolEmojiSearch, ToolPins,
+			ToolBookmarks, ToolRemindersAdd, ToolUsersSetStatus, ToolPresence, ToolDND,
+		} {
+			expectedTools[tool] = true
+		}
 
 		assert.Equal(t, len(expectedTools), len(ValidToolNames), "ValidToolNames should have %d tools", len(expectedTools))
 

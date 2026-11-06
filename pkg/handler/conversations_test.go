@@ -633,6 +633,32 @@ func TestUnitIsChannelAllowedForConfig(t *testing.T) {
 	}
 }
 
+func TestUnitChannelAllowed(t *testing.T) {
+	tests := []struct {
+		name   string
+		config string
+		ids    []string
+		want   bool
+	}{
+		{"no policy", "", []string{"D1"}, true},
+		{"true", "true", []string{"D1"}, true},
+		{"allowlist by user ID", "U1", []string{"U1", "D1"}, true},
+		{"allowlist by DM ID", "D1", []string{"U1", "D1"}, true},
+		{"allowlist without a match", "C1", []string{"U1", "D1"}, false},
+		{"denylist by user ID", "!U1", []string{"U1", "D1"}, false},
+		{"denylist by DM ID", "!D1", []string{"U1", "D1"}, false},
+		{"denylist without a match", "!C1", []string{"U1", "D1"}, true},
+		{"unresolved names are skipped", "!D1", []string{"U1", ""}, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := channelAllowed(tt.config, tt.ids...); got != tt.want {
+				t.Errorf("channelAllowed(%q, %q) = %v, want %v", tt.config, tt.ids, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestUnitIsSlackUserIDPrefix(t *testing.T) {
 	tests := []struct {
 		name string

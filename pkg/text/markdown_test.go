@@ -123,6 +123,51 @@ func TestPrepareMarkdown(t *testing.T) {
 			in:   "https://example.com\n:tada:",
 			want: "https://example.com\n:tada:",
 		},
+		{
+			name: "no mark touches a URL, at either end of a line",
+			in:   "ראה https://x.com/a\nhttps://slack.com זה האתר\nhttps://slack.com\nראה https://x.com.",
+			want: rlm + "ראה https://x.com/a\nhttps://slack.com " + rlm + "זה האתר" + rlm + "\nhttps://slack.com\n" + rlm + "ראה https://x.com.",
+		},
+		{
+			name: "a URL inside bold keeps its marks outside",
+			in:   "**https://x.com** מודגש",
+			want: "**https://x.com** " + rlm + "מודגש" + rlm,
+		},
+		{
+			name: "a closing underscore with no partner is not emphasis",
+			in:   "שורה עם snake_case_",
+			want: rlm + "שורה עם snake_case" + rlm + "_",
+		},
+		{
+			name: "Hebrew numbered tasks keep their numbers",
+			in:   "1. [ ] א\n2. [x] ב\n3. ג",
+			want: rlm + "1. [ ] א" + rlm + "\n" + rlm + "2. [x] ב" + rlm + "\n" + rlm + "3. ג" + rlm,
+		},
+		{
+			name: "code inside a written-out list item is kept and unindented",
+			in:   "1. צעד\n    ```\n    x = 1 **a**\n    ```\n2. שני",
+			want: rlm + "1. צעד" + rlm + "\n```\nx = 1 **a**\n```\n" + rlm + "2. שני" + rlm,
+		},
+		{
+			name: "code inside a native list item is kept as written",
+			in:   "- א\n    ```\n    שלום **x**\n    ```\n- ב",
+			want: "- " + rlm + "א" + rlm + "\n    ```\n    שלום **x**\n    ```\n- " + rlm + "ב" + rlm,
+		},
+		{
+			name: "a fence with an info string does not close a code block",
+			in:   "```\na\n```bash\nb\n```\nאחרי",
+			want: "```\na\n```bash\nb\n```\n" + rlm + "אחרי" + rlm,
+		},
+		{
+			name: "backticks in the info string make inline code, not a fence",
+			in:   "```inline``` טקסט",
+			want: rlm + lrm + "```inline```" + lrm + " טקסט" + rlm,
+		},
+		{
+			name: "code in a Hebrew line is marked around, never inside",
+			in:   "שלחתי `<@U1>` ל-<@U2> ו-`קוד` לבדיקה",
+			want: rlm + "שלחתי " + lrm + "`<@U1>`" + lrm + " ל-" + lrm + "<@U2> ו-`קוד` לבדיקה" + rlm,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -150,6 +195,7 @@ func TestInlineMrkdwn(t *testing.T) {
 	tests := []struct{ in, want string }{
 		{"**a** *b* ~~c~~ [d](https://e.com)", "*a* _b_ ~c~ <https://e.com|d>"},
 		{"העברה עם **הערה**, עם סוף.", rlm + "העברה עם *הערה*, עם סוף." + rlm},
+		{"`*a*` https://x.com/_y_ *b*\n*c\nd*", "`*a*` https://x.com/_y_ _b_\n*c\nd*"},
 	}
 	for _, tt := range tests {
 		if got := InlineMrkdwn(tt.in); got != tt.want {
@@ -161,6 +207,12 @@ func TestInlineMrkdwn(t *testing.T) {
 func TestMarkdownFallback(t *testing.T) {
 	in := "# Title\n\n**bold** ~~x~~ `c` [d](https://e.com)\n\n---\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n```\n**kept**\n```"
 	want := "Title\n\nbold x c d\n\n\na | b\n1 | 2\n\n**kept**"
+	if got := MarkdownFallback(in); got != want {
+		t.Errorf("MarkdownFallback(%q)\n got %q\nwant %q", in, got, want)
+	}
+
+	in = "x ** 2 in `a ** b` and https://x.com/a__b **bold**"
+	want = "x ** 2 in a ** b and https://x.com/a__b bold"
 	if got := MarkdownFallback(in); got != want {
 		t.Errorf("MarkdownFallback(%q)\n got %q\nwant %q", in, got, want)
 	}

@@ -268,6 +268,7 @@ func (ch *ChannelsHandler) ChannelsMeHandler(ctx context.Context, request mcp.Ca
 	// results and using the API's native cursor for pagination. This avoids
 	// fetching every channel the user belongs to on large workspaces.
 	usersMap := ch.ap(ctx).ProvideUsersMap().Users
+	cached := ch.ap(ctx).ProvideChannelsMaps()
 	var allChannels []provider.Channel
 	var apiCursor string
 	var slackNextCursor string
@@ -290,7 +291,12 @@ func (ch *ChannelsHandler) ChannelsMeHandler(ctx context.Context, request mcp.Ca
 		}
 
 		for _, c := range channels {
-			allChannels = append(allChannels, provider.MapChannelFromSlack(c, usersMap))
+			channel := provider.MapChannelFromSlack(c, usersMap)
+			// users.conversations leaves out member counts; the channel cache has them.
+			if known, ok := cached.Channels[channel.ID]; ok && channel.MemberCount == 0 {
+				channel.MemberCount = known.MemberCount
+			}
+			allChannels = append(allChannels, channel)
 		}
 
 		// Early exit: stop paginating through the Slack API once we have enough.
