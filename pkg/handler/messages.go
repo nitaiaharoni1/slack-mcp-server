@@ -7,19 +7,22 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/nitaiaharoni1/slack-mcp-server/pkg/text"
 	"github.com/slack-go/slack"
 	"go.uber.org/zap"
 )
 
-// maxUploadBytes caps files_upload content, matching attachment_get_data's limit.
-const maxUploadBytes = 5 * 1024 * 1024
+// maxUploadBytes is Slack's limit for one uploaded file.
+const maxUploadBytes = 1 << 30
 
 // writableChannel resolves a channel argument for a tool that changes messages
 // and applies the same SLACK_MCP_ADD_MESSAGE_TOOL policy as conversations_add_message.
@@ -52,11 +55,36 @@ func requireTS(name, ts string) error {
 }
 
 func jsonResult(v any) (*mcp.CallToolResult, error) {
-	out, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
+	var out strings.Builder
+	enc := json.NewEncoder(&out)
+	enc.SetIndent("", "  ")
+	enc.SetEscapeHTML(false) // keep <, > and & readable: canvases are HTML, messages hold <@U...>
+	if err := enc.Encode(v); err != nil {
 		return nil, err
 	}
-	return mcp.NewToolResultText(string(out)), nil
+	return mcp.NewToolResultText(strings.TrimRight(out.String(), "\n")), nil
+}
+
+// requireLocalFiles guards the arguments that read or write paths on the
+// server's machine: over a network transport they would hand that machine's
+// files to whoever calls the server.
+func (ch *ConversationsHandler) requireLocalFiles(ctx context.Context, arg string) error {
+	if transport := ch.ap(ctx).ServerTransport(); transport != "stdio" {
+		return fmt.Errorf("%s is only available over the stdio transport, not %s", arg, transport)
+	}
+	return nil
+}
+
+// expandPath resolves ~ and returns an absolute path.
+func expandPath(path string) (string, error) {
+	if path == "~" || strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		path = filepath.Join(home, path[1:])
+	}
+	return filepath.Abs(path)
 }
 
 // MessagesUpdateHandler edits a message the account posted (chat.update).
@@ -268,11 +296,12 @@ func (ch *ConversationsHandler) MessagesForwardHandler(ctx context.Context, requ
 	if err != nil {
 		return nil, err
 	}
-	text := link
+	// Plain text, not a markdown block: Slack unfurls the permalink only then.
+	body := link
 	if comment := strings.TrimSpace(request.GetString("comment", "")); comment != "" {
-		text = comment + "\n" + link
+		body = text.InlineMrkdwn(comment) + "\n" + link
 	}
-	options := []slack.MsgOption{slack.MsgOptionText(text, false), slack.MsgOptionEnableLinkUnfurl()}
+	options := []slack.MsgOption{slack.MsgOptionText(body, false), slack.MsgOptionEnableLinkUnfurl()}
 	if threadTs != "" {
 		options = append(options, slack.MsgOptionTS(threadTs))
 	}
@@ -288,6 +317,7 @@ type fileSummary struct {
 	Name      string   `json:"name"`
 	Title     string   `json:"title"`
 	Type      string   `json:"type"`
+	Mimetype  string   `json:"mimetype"`
 	Size      int      `json:"size"`
 	User      string   `json:"user"`
 	Created   string   `json:"created"`
@@ -298,7 +328,7 @@ type fileSummary struct {
 func summarizeFile(f slack.File) fileSummary {
 	shared := append(append(append([]string{}, f.Channels...), f.Groups...), f.IMs...)
 	return fileSummary{
-		ID: f.ID, Name: f.Name, Title: f.Title, Type: f.PrettyType, Size: f.Size, User: f.User,
+		ID: f.ID, Name: f.Name, Title: f.Title, Type: f.PrettyType, Mimetype: f.Mimetype, Size: f.Size, User: f.User,
 		Created: f.Created.Time().UTC().Format(time.RFC3339), Permalink: f.Permalink, SharedIn: shared,
 	}
 }
@@ -329,13 +359,15 @@ func (ch *ConversationsHandler) FilesListHandler(ctx context.Context, request mc
 	if err != nil {
 		return nil, err
 	}
+	// Slack returns the newest page, but oldest first within it.
+	sort.SliceStable(files, func(i, j int) bool { return files[i].Created > files[j].Created })
 	out := make([]fileSummary, 0, len(files))
 	for _, f := range files {
 		out = append(out, summarizeFile(f))
 	}
 	result := map[string]any{"files": out}
 	if paging != nil {
-		result["page"], result["pages"] = paging.Page, paging.Pages
+		result["page"], result["pages"], result["total"] = paging.Page, paging.Pages, paging.Total
 	}
 	return jsonResult(result)
 }
@@ -370,54 +402,156 @@ func (ch *ConversationsHandler) FilesDeleteHandler(ctx context.Context, request 
 	return mcp.NewToolResultText("Deleted file " + id), nil
 }
 
+// FilesDownloadHandler saves a file to the local disk, at any size.
+func (ch *ConversationsHandler) FilesDownloadHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	ch.logger.Debug("FilesDownloadHandler called", zap.Any("params", request.Params))
+
+	if err := ch.requireLocalFiles(ctx, "save_path"); err != nil {
+		return nil, err
+	}
+	id := request.GetString("file_id", "")
+	if id == "" {
+		return nil, errors.New("file_id is required")
+	}
+	rawPath := request.GetString("save_path", "")
+	if rawPath == "" {
+		return nil, errors.New("save_path is required")
+	}
+	file, _, _, err := ch.ap(ctx).Slack().GetFileInfoContext(ctx, id, 0, 0)
+	if err != nil {
+		return nil, err
+	}
+	target, err := downloadTarget(rawPath, file)
+	if err != nil {
+		return nil, err
+	}
+
+	// Download beside the target so a failed transfer leaves no partial file.
+	tmp, err := os.CreateTemp(filepath.Dir(target), ".slack-download-*")
+	if err != nil {
+		return nil, err
+	}
+	defer os.Remove(tmp.Name())
+	size, err := ch.fetchFile(ctx, file, tmp)
+	if closeErr := tmp.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
+		return nil, err
+	}
+	if err := os.Rename(tmp.Name(), target); err != nil {
+		return nil, err
+	}
+	return jsonResult(map[string]any{
+		"file_id": file.ID, "filename": file.Name, "mimetype": file.Mimetype, "size": size, "saved_to": target,
+	})
+}
+
+// downloadTarget turns save_path into the file to write: the path itself, or
+// the file's own name inside it when it is a directory. It never overwrites.
+func downloadTarget(rawPath string, file *slack.File) (string, error) {
+	target, err := expandPath(rawPath)
+	if err != nil {
+		return "", err
+	}
+	info, statErr := os.Stat(target)
+	if strings.HasSuffix(rawPath, "/") || statErr == nil && info.IsDir() {
+		name := filepath.Base(file.Name)
+		if name == "." || name == ".." || name == string(filepath.Separator) {
+			name = file.ID
+		}
+		target = filepath.Join(target, name)
+	}
+	if _, err := os.Stat(target); err == nil {
+		return "", fmt.Errorf("%s already exists: pass another save_path", target)
+	}
+	if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		return "", err
+	}
+	return target, nil
+}
+
 // FilesUploadHandler uploads a file, optionally sharing it to a channel or thread.
 func (ch *ConversationsHandler) FilesUploadHandler(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	ch.logger.Debug("FilesUploadHandler called", zap.Any("params", request.Params))
 
-	var data []byte
+	path, content, b64 := request.GetString("file_path", ""), request.GetString("content", ""), request.GetString("content_base64", "")
+	sources := 0
+	for _, source := range []string{path, content, b64} {
+		if source != "" {
+			sources++
+		}
+	}
+	if sources != 1 {
+		return nil, errors.New("give exactly one of file_path, content or content_base64")
+	}
+
+	threadTs := request.GetString("thread_ts", "")
+	if threadTs != "" {
+		if request.GetString("channel_id", "") == "" {
+			return nil, errors.New("thread_ts needs channel_id: a thread belongs to a channel")
+		}
+		if err := requireTS("thread_ts", threadTs); err != nil {
+			return nil, err
+		}
+	}
+
+	var reader io.Reader
+	var size int64
 	filename := request.GetString("filename", "")
-	switch path, content, b64 := request.GetString("file_path", ""), request.GetString("content", ""), request.GetString("content_base64", ""); {
+	switch {
 	case path != "":
-		info, err := os.Stat(path)
+		if err := ch.requireLocalFiles(ctx, "file_path"); err != nil {
+			return nil, err
+		}
+		resolved, err := expandPath(path)
 		if err != nil {
 			return nil, err
 		}
-		if info.Size() > maxUploadBytes {
-			return nil, fmt.Errorf("file is %d bytes, the limit is %d", info.Size(), maxUploadBytes)
-		}
-		if data, err = os.ReadFile(path); err != nil {
+		f, err := os.Open(resolved)
+		if err != nil {
 			return nil, err
 		}
+		defer f.Close()
+		info, err := f.Stat()
+		if err != nil {
+			return nil, err
+		}
+		if info.IsDir() {
+			return nil, fmt.Errorf("%s is a directory", resolved)
+		}
+		reader, size = f, info.Size()
 		if filename == "" {
-			filename = filepath.Base(path)
+			filename = filepath.Base(resolved)
 		}
 	case content != "":
-		data = []byte(content)
-	case b64 != "":
-		var err error
-		if data, err = base64.StdEncoding.DecodeString(b64); err != nil {
+		reader, size = strings.NewReader(content), int64(len(content))
+	default:
+		data, err := base64.StdEncoding.DecodeString(b64)
+		if err != nil {
 			return nil, fmt.Errorf("content_base64 is not valid base64: %w", err)
 		}
-	default:
-		return nil, errors.New("one of file_path, content or content_base64 is required")
+		reader, size = bytes.NewReader(data), int64(len(data))
 	}
 	if filename == "" {
 		return nil, errors.New("filename is required when uploading content")
 	}
-	if len(data) == 0 {
+	if size == 0 {
 		return nil, errors.New("the file is empty")
 	}
-	if len(data) > maxUploadBytes {
-		return nil, fmt.Errorf("file is %d bytes, the limit is %d", len(data), maxUploadBytes)
+	if size > maxUploadBytes {
+		return nil, fmt.Errorf("file is %d bytes, the limit is %d", size, maxUploadBytes)
 	}
 
 	params := slack.UploadFileParameters{
-		Reader:          bytes.NewReader(data),
-		FileSize:        len(data),
+		Reader:          reader,
+		FileSize:        int(size),
 		Filename:        filename,
 		Title:           request.GetString("title", ""),
-		InitialComment:  request.GetString("initial_comment", ""),
-		ThreadTimestamp: request.GetString("thread_ts", ""),
+		ThreadTimestamp: threadTs,
 	}
 	if raw := request.GetString("channel_id", ""); raw != "" {
 		channel, err := ch.writableChannel(ctx, raw, "files_upload")
@@ -426,13 +560,27 @@ func (ch *ConversationsHandler) FilesUploadHandler(ctx context.Context, request 
 		}
 		params.Channel = channel
 	}
+	if comment := strings.TrimSpace(request.GetString("initial_comment", "")); comment != "" {
+		if params.Channel == "" {
+			return nil, errors.New("initial_comment needs channel_id: the comment is a message in that channel")
+		}
+		block, err := markdownBlock(comment)
+		if err != nil {
+			return nil, err
+		}
+		params.Blocks = slack.Blocks{BlockSet: []slack.Block{block}}
+	}
 
 	file, err := ch.ap(ctx).Slack().UploadFileContext(ctx, params)
 	if err != nil {
 		ch.logger.Error("Slack UploadFileContext failed", zap.Error(err))
 		return nil, err
 	}
-	return jsonResult(map[string]any{"file_id": file.ID, "title": file.Title, "channel": params.Channel})
+	result := map[string]any{"file_id": file.ID, "title": file.Title, "channel": params.Channel, "size": size}
+	if info, _, _, err := ch.ap(ctx).Slack().GetFileInfoContext(ctx, file.ID, 0, 0); err == nil {
+		result["permalink"] = info.Permalink
+	}
+	return jsonResult(result)
 }
 
 // UsersInfoHandler returns one user's full profile, including custom fields.

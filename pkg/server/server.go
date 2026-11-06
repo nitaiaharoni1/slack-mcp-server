@@ -198,7 +198,7 @@ func NewMCPServer(registry *provider.Registry, logger *zap.Logger, enabledTools 
 				mcp.Description("With thread_ts: also show the reply in the channel (Slack's \"Also send to channel\")."),
 			),
 			mcp.WithString("text",
-				mcp.Description("Message text in specified content_type format. Example: 'Hello, world!' for text/plain or '# Hello, world!' for text/markdown."),
+				mcp.Description(MessageTextDescription),
 			),
 			mcp.WithString("content_type",
 				mcp.DefaultString("text/markdown"),
@@ -250,7 +250,7 @@ func NewMCPServer(registry *provider.Registry, logger *zap.Logger, enabledTools 
 
 	if shouldAddTool(ToolAttachmentGetData, enabledTools, "SLACK_MCP_ATTACHMENT_TOOL") {
 		addTool(s, registry, mcp.NewTool(ToolAttachmentGetData,
-			mcp.WithDescription("Download an attachment's content by file ID. Returns file metadata and content (text files as-is, binary files as base64). Maximum file size is 5MB."),
+			mcp.WithDescription("Read an attachment's content into the conversation by file ID: images as images, text files as-is, other files as base64. Up to 5MB; to save a file to disk, at any size, use files_download."),
 			mcp.WithTitleAnnotation("Get Attachment Data"),
 			mcp.WithReadOnlyHintAnnotation(true),
 			mcp.WithString("file_id",

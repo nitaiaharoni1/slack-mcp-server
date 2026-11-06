@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"regexp"
@@ -14,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gocarina/gocsv"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -29,7 +31,8 @@ import (
 const (
 	defaultConversationsNumericLimit    = 50
 	defaultConversationsExpressionLimit = "1d"
-	maxFileSizeBytes                    = 5 * 1024 * 1024 // 5MB limit
+	maxFileSizeBytes                    = 5 * 1024 * 1024 // what attachment_get_data returns inline
+	slackDocsMimetype                   = "application/vnd.slack-docs"
 )
 
 var validFilterKeys = map[string]struct{}{
@@ -279,17 +282,14 @@ func (ch *ConversationsHandler) messageContentOptions(params *addMessageParams) 
 		switch params.contentType {
 		case "text/plain":
 			options = append(options, slack.MsgOptionDisableMarkdown())
-			options = append(options, slack.MsgOptionText(params.text, false))
+			options = append(options, slack.MsgOptionText(text.BidiLines(params.text), false))
 		case "text/markdown":
-			blocks, err := markdownToBlocks(params.text)
+			block, err := markdownBlock(params.text)
 			if err != nil {
-				ch.logger.Warn("Markdown parsing error", zap.Error(err))
-				options = append(options, slack.MsgOptionDisableMarkdown())
-				options = append(options, slack.MsgOptionText(params.text, false))
-			} else {
-				// Blocks alone leave notifications, previews and search with no text.
-				options = append(options, slack.MsgOptionBlocks(blocks...), slack.MsgOptionText(params.text, false))
+				return nil, err
 			}
+			// Blocks alone leave notifications, previews and search with no text.
+			options = append(options, slack.MsgOptionBlocks(block), slack.MsgOptionText(text.MarkdownFallback(params.text), false))
 		default:
 			return nil, errors.New("content_type must be either 'text/plain' or 'text/markdown'")
 		}
@@ -304,6 +304,16 @@ func (ch *ConversationsHandler) messageContentOptions(params *addMessageParams) 
 	}
 
 	return options, nil
+}
+
+// markdownBlock builds the Slack markdown block for a message body. Slack parses
+// the markdown itself, including headings, lists, tables and dividers.
+func markdownBlock(markdown string) (*slack.MarkdownBlock, error) {
+	prepared := text.PrepareMarkdown(markdown)
+	if n := utf8.RuneCountInString(prepared); n > text.MaxMarkdownChars {
+		return nil, fmt.Errorf("the message is %d characters once formatted and Slack allows %d: split it into several messages, or send it as a file with files_upload", n, text.MaxMarkdownChars)
+	}
+	return slack.NewMarkdownBlock("", prepared), nil
 }
 
 // ReactionsAddHandler adds an emoji reaction to a message
@@ -464,61 +474,78 @@ func (ch *ConversationsHandler) FilesGetHandler(ctx context.Context, request mcp
 	}
 
 	if fileInfo.Size > maxFileSizeBytes {
-		return nil, fmt.Errorf("file size %d bytes exceeds maximum allowed size of %d bytes", fileInfo.Size, maxFileSizeBytes)
+		return nil, fmt.Errorf("file size %d bytes exceeds the %d bytes this tool returns inline: save it to disk with files_download", fileInfo.Size, maxFileSizeBytes)
 	}
 
 	var buf bytes.Buffer
-	downloadURL := fileInfo.URLPrivateDownload
-	if downloadURL == "" {
-		downloadURL = fileInfo.URLPrivate
-	}
-	if downloadURL == "" {
-		return nil, errors.New("file has no downloadable URL")
-	}
-
-	err = ch.ap(ctx).Slack().GetFileContext(ctx, downloadURL, &buf)
-	if err != nil {
+	if _, err := ch.fetchFile(ctx, fileInfo, &buf); err != nil {
 		ch.logger.Error("Slack GetFileContext failed", zap.Error(err))
 		return nil, err
 	}
-
 	content := buf.Bytes()
 
-	// For image files, return as native MCP image content so the client
-	// can render them directly without base64-in-JSON overflow.
+	metadata := map[string]any{
+		"file_id":  fileInfo.ID,
+		"filename": fileInfo.Name,
+		"mimetype": fileInfo.Mimetype,
+		"size":     len(content),
+	}
+
+	// Image types a client can render come back as native MCP image content,
+	// so they do not overflow as base64 in JSON.
 	if isImageMimetype(fileInfo.Mimetype) {
-		imageData := base64.StdEncoding.EncodeToString(content)
-		metadata := fmt.Sprintf(`{"file_id":"%s","filename":"%s","mimetype":"%s","size":%d}`,
-			fileInfo.ID,
-			escapeJSON(fileInfo.Name),
-			escapeJSON(fileInfo.Mimetype),
-			len(content))
-		return mcp.NewToolResultImage(metadata, imageData, fileInfo.Mimetype), nil
+		out, err := json.Marshal(metadata)
+		if err != nil {
+			return nil, err
+		}
+		return mcp.NewToolResultImage(string(out), base64.StdEncoding.EncodeToString(content), fileInfo.Mimetype), nil
 	}
 
-	encoding := "none"
-	var contentStr string
-
-	if isTextMimetype(fileInfo.Mimetype) {
-		contentStr = string(content)
+	if isTextMimetype(fileInfo.Mimetype) && utf8.Valid(content) {
+		metadata["encoding"], metadata["content"] = "none", string(content)
 	} else {
-		contentStr = base64.StdEncoding.EncodeToString(content)
-		encoding = "base64"
+		metadata["encoding"], metadata["content"] = "base64", base64.StdEncoding.EncodeToString(content)
 	}
+	return jsonResult(metadata)
+}
 
-	result := fmt.Sprintf(`{"file_id":"%s","filename":"%s","mimetype":"%s","size":%d,"encoding":"%s","content":"%s"}`,
-		fileInfo.ID,
-		escapeJSON(fileInfo.Name),
-		escapeJSON(fileInfo.Mimetype),
-		len(content),
-		encoding,
-		escapeJSON(contentStr))
+// fetchFile writes a file's content to w and checks that all of it arrived. A
+// token without files:read gets an HTML login page with a 200 status instead.
+func (ch *ConversationsHandler) fetchFile(ctx context.Context, file *slack.File, w io.Writer) (int64, error) {
+	downloadURL := file.URLPrivateDownload
+	if downloadURL == "" {
+		downloadURL = file.URLPrivate
+	}
+	if downloadURL == "" {
+		return 0, errors.New("file has no downloadable URL")
+	}
+	counter := &countingWriter{w: w}
+	if err := ch.ap(ctx).Slack().GetFileContext(ctx, downloadURL, counter); err != nil {
+		return counter.n, err
+	}
+	if file.Mimetype != slackDocsMimetype && file.Size > 0 && counter.n != int64(file.Size) {
+		return counter.n, fmt.Errorf("download of %s returned %d bytes instead of %d: check that the token has the files:read scope", file.ID, counter.n, file.Size)
+	}
+	return counter.n, nil
+}
 
-	return mcp.NewToolResultText(result), nil
+type countingWriter struct {
+	w io.Writer
+	n int64
+}
+
+func (c *countingWriter) Write(p []byte) (int, error) {
+	n, err := c.w.Write(p)
+	c.n += int64(n)
+	return n, err
 }
 
 func isImageMimetype(mimetype string) bool {
-	return strings.HasPrefix(mimetype, "image/")
+	switch mimetype {
+	case "image/png", "image/jpeg", "image/gif", "image/webp":
+		return true
+	}
+	return false
 }
 
 func isTextMimetype(mimetype string) bool {
@@ -526,6 +553,8 @@ func isTextMimetype(mimetype string) bool {
 		return true
 	}
 	textMimetypes := map[string]bool{
+		slackDocsMimetype:        true,
+		"image/svg+xml":          true,
 		"application/json":       true,
 		"application/xml":        true,
 		"application/javascript": true,
@@ -533,15 +562,6 @@ func isTextMimetype(mimetype string) bool {
 		"application/x-sh":       true,
 	}
 	return textMimetypes[mimetype]
-}
-
-func escapeJSON(s string) string {
-	s = strings.ReplaceAll(s, `\`, `\\`)
-	s = strings.ReplaceAll(s, `"`, `\"`)
-	s = strings.ReplaceAll(s, "\n", `\n`)
-	s = strings.ReplaceAll(s, "\r", `\r`)
-	s = strings.ReplaceAll(s, "\t", `\t`)
-	return s
 }
 
 // ConversationsHistoryHandler streams conversation history as CSV
@@ -1509,6 +1529,9 @@ func isChannelAllowed(channel string) bool {
 }
 
 func (ch *ConversationsHandler) resolveChannelID(ctx context.Context, channel string) (string, error) {
+	if isSlackUserIDPrefix(channel) {
+		return ch.openDM(ctx, channel)
+	}
 	if !strings.HasPrefix(channel, "#") && !strings.HasPrefix(channel, "@") {
 		return channel, nil
 	}
@@ -1545,6 +1568,12 @@ func (ch *ConversationsHandler) resolveChannelID(ctx context.Context, channel st
 	channelsMaps = ch.ap(ctx).ProvideChannelsMaps()
 	chn, ok = channelsMaps.ChannelsInv[channel]
 	if !ok {
+		// A person with no DM yet has no channel in the cache.
+		if strings.HasPrefix(channel, "@") {
+			if user, err := ch.resolveUserID(ctx, channel); err == nil {
+				return ch.openDM(ctx, user)
+			}
+		}
 		ch.logger.Error("Channel not found even after cache refresh",
 			zap.String("channel", channel))
 		return "", fmt.Errorf("channel %q not found", channel)
@@ -1555,6 +1584,16 @@ func (ch *ConversationsHandler) resolveChannelID(ctx context.Context, channel st
 		zap.String("channel_id", channelsMaps.Channels[chn].ID))
 
 	return channelsMaps.Channels[chn].ID, nil
+}
+
+// openDM returns the DM channel with a user. Posting accepts a user ID, but
+// reactions, pins, permalinks and file sharing need the channel's own ID.
+func (ch *ConversationsHandler) openDM(ctx context.Context, userID string) (string, error) {
+	channel, _, _, err := ch.ap(ctx).Slack().OpenConversationContext(ctx, &slack.OpenConversationParameters{Users: []string{userID}})
+	if err != nil {
+		return "", fmt.Errorf("opening a DM with %s: %w", userID, err)
+	}
+	return channel.ID, nil
 }
 
 func (ch *ConversationsHandler) convertMessagesFromHistory(ctx context.Context, slackMessages []slack.Message, channel string, includeActivity bool) []Message {
@@ -1731,6 +1770,14 @@ func (ch *ConversationsHandler) parseParamsToolConversations(ctx context.Context
 			ch.logger.Error("Invalid numeric limit", zap.String("limit", limit), zap.Error(err))
 			return nil, err
 		}
+	}
+
+	if isSlackUserIDPrefix(channel) {
+		dm, err := ch.openDM(ctx, channel)
+		if err != nil {
+			return nil, err
+		}
+		channel = dm
 	}
 
 	if strings.HasPrefix(channel, "#") || strings.HasPrefix(channel, "@") {
@@ -2000,15 +2047,10 @@ func (ch *ConversationsHandler) parseParamsToolMark(ctx context.Context, request
 		return nil, errors.New("channel_id is required")
 	}
 
-	// Resolve channel name to ID if needed
-	if strings.HasPrefix(channel, "#") || strings.HasPrefix(channel, "@") {
-		channelsMaps := ch.ap(ctx).ProvideChannelsMaps()
-		chn, ok := channelsMaps.ChannelsInv[channel]
-		if !ok {
-			ch.logger.Error("Channel not found", zap.String("channel", channel))
-			return nil, fmt.Errorf("channel %q not found", channel)
-		}
-		channel = channelsMaps.Channels[chn].ID
+	channel, err := ch.resolveChannelID(ctx, channel)
+	if err != nil {
+		ch.logger.Error("Channel not found", zap.String("channel", channel), zap.Error(err))
+		return nil, err
 	}
 
 	ts := request.GetString("ts", "")
@@ -2112,8 +2154,11 @@ func (ch *ConversationsHandler) parseParamsToolSearch(ctx context.Context, req m
 }
 
 // Slack user IDs may begin with U or W: https://docs.slack.dev/changelog/2016/08/11/user-id-format-changes
+var slackUserIDRe = regexp.MustCompile(`^[UW][A-Z0-9]{6,}$`)
+
+// isSlackUserIDPrefix reports a user ID, as opposed to a name such as "Uri".
 func isSlackUserIDPrefix(s string) bool {
-	return strings.HasPrefix(s, "U") || strings.HasPrefix(s, "W")
+	return slackUserIDRe.MatchString(s)
 }
 
 func (ch *ConversationsHandler) paramFormatUser(ctx context.Context, raw string) (string, error) {

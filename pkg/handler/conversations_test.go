@@ -642,6 +642,7 @@ func TestUnitIsSlackUserIDPrefix(t *testing.T) {
 		{"U prefix", "U0123ABCD", true},
 		{"W prefix", "W0123ABCD", true},
 		{"plain name not ID", "alice", false},
+		{"name starting with U not ID", "Uri", false},
 		{"empty", "", false},
 	}
 	for _, tt := range tests {

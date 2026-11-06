@@ -345,6 +345,7 @@ func ProcessText(s string) string {
 	s = normalizeLinks(s)
 	s = stripUnsafeRunes(s)
 	s = collapseInlineSpaces(s)
+	s = slackEntities.Replace(s) // Slack stores &, < and > as entities
 
 	return strings.TrimSpace(s)
 }
@@ -361,6 +362,8 @@ func HumanizeCertificates(certs []*x509.Certificate) string {
 	}
 	return strings.Join(descriptions, ", ")
 }
+
+var slackEntities = strings.NewReplacer("&amp;", "&", "&lt;", "<", "&gt;", ">")
 
 var (
 	slackLinkRegex    = regexp.MustCompile(`<(https?://[^>|]+)\|([^>]+)>`)

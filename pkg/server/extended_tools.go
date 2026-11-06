@@ -22,6 +22,7 @@ const (
 	ToolMessagesPermalink       = "messages_permalink"
 	ToolMessagesForward         = "messages_forward"
 	ToolFilesUpload             = "files_upload"
+	ToolFilesDownload           = "files_download"
 	ToolUsersInfo               = "users_info"
 	ToolCanvasesCreate          = "canvases_create"
 	ToolCanvasesRead            = "canvases_read"
@@ -58,7 +59,7 @@ func init() {
 	ValidToolNames = append(ValidToolNames,
 		ToolListAccounts, ToolMessagesUpdate, ToolMessagesDelete, ToolMessagesSchedule,
 		ToolMessagesScheduledList, ToolMessagesScheduledDelete, ToolMessagesPermalink, ToolMessagesForward,
-		ToolFilesUpload, ToolFilesList, ToolFilesInfo, ToolFilesDelete, ToolUsersInfo,
+		ToolFilesUpload, ToolFilesDownload, ToolFilesList, ToolFilesInfo, ToolFilesDelete, ToolUsersInfo,
 		ToolCanvasesCreate, ToolCanvasesRead, ToolCanvasesEdit, ToolCanvasesSectionsLookup, ToolCanvasesDelete,
 		ToolListsCreate, ToolListsItemsList, ToolListsItemGet, ToolListsItemsCreate, ToolListsItemsUpdate,
 		ToolListsItemsDelete, ToolListsUpdate,
@@ -68,13 +69,16 @@ func init() {
 	)
 }
 
-const channelArgDescription = "ID of the channel in format Cxxxxxxxxxx or its name starting with #... or @... aka #general or @username_dm."
+const channelArgDescription = "ID of the channel in format Cxxxxxxxxxx, a user ID (Uxxxxxxxxxx) for their DM, or a name starting with #... or @... aka #general or @username_dm."
+
+// MessageTextDescription tells callers what the message text supports.
+const MessageTextDescription = "Message text in the content_type format. text/markdown supports headings, **bold**, *italic*, ~~strike~~, `code`, links, bullet, numbered and task lists (nested too), > quotes, code blocks, --- dividers, tables, <@U...> mentions and :emoji:. Up to 12,000 characters. Hebrew and other RTL text needs no marks or special ordering: the server sets each line's direction, also for lists, tables and mentions."
 
 // messageBodyArgs are the content arguments shared with conversations_add_message.
 func messageBodyArgs() []mcp.ToolOption {
 	return []mcp.ToolOption{
 		mcp.WithString("text",
-			mcp.Description("Message text in the content_type format. Hebrew or other RTL text: start every line with U+200F (RLM) and never open a line with a mention or an English word, or Slack renders it left-to-right."),
+			mcp.Description(MessageTextDescription),
 		),
 		mcp.WithString("content_type",
 			mcp.DefaultString("text/markdown"),
@@ -161,22 +165,29 @@ func registerExtendedTools(s *server.MCPServer, registry *provider.Registry, ena
 		mcp.WithString("timestamp", mcp.Required(), mcp.Description("ts of the message to forward, in format 1234567890.123456.")),
 		mcp.WithString("target_channel_id", mcp.Required(), mcp.Description("Where to forward it. "+channelArgDescription)),
 		mcp.WithString("target_thread_ts", mcp.Description("Optional ts of a thread in the target to forward into.")),
-		mcp.WithString("comment", mcp.Description("Optional text posted above the forwarded message.")),
+		mcp.WithString("comment", mcp.Description("Optional text posted above the forwarded message, as markdown like conversations_add_message text.")),
 	), convs.MessagesForwardHandler)
 
 	add(ToolFilesUpload, "SLACK_MCP_ADD_MESSAGE_TOOL", mcp.NewTool(ToolFilesUpload,
-		mcp.WithDescription("Upload a file (up to 5 MB) as the account, optionally sharing it to a channel or thread. Give exactly one of file_path, content or content_base64."),
+		mcp.WithDescription("Upload a file (up to 1 GB) as the account, optionally sharing it to a channel or thread. Give exactly one of file_path, content or content_base64."),
 		mcp.WithTitleAnnotation("Upload File"),
 		mcp.WithDestructiveHintAnnotation(true),
-		mcp.WithString("file_path", mcp.Description("Local path of the file to upload.")),
+		mcp.WithString("file_path", mcp.Description("Local path of the file to upload; ~ works. The right choice for anything but short text: it does not pass through the conversation.")),
 		mcp.WithString("content", mcp.Description("Text content to upload as a file.")),
 		mcp.WithString("content_base64", mcp.Description("Binary content, base64-encoded.")),
 		mcp.WithString("filename", mcp.Description("File name; required with content or content_base64.")),
 		mcp.WithString("title", mcp.Description("Optional title.")),
 		mcp.WithString("channel_id", mcp.Description("Optional channel to share to. "+channelArgDescription)),
 		mcp.WithString("thread_ts", mcp.Description("Optional thread ts to share into (needs channel_id).")),
-		mcp.WithString("initial_comment", mcp.Description("Optional message posted with the file.")),
+		mcp.WithString("initial_comment", mcp.Description("Optional message posted with the file, as markdown like conversations_add_message text (needs channel_id).")),
 	), convs.FilesUploadHandler)
+
+	add(ToolFilesDownload, "SLACK_MCP_ATTACHMENT_TOOL", mcp.NewTool(ToolFilesDownload,
+		mcp.WithDescription("Download a Slack file to the local disk, at any size. Returns where it was saved. To read a small file's content into the conversation use attachment_get_data instead."),
+		mcp.WithTitleAnnotation("Download File"),
+		mcp.WithString("file_id", mcp.Required(), mcp.Description("File ID (Fxxxxxxxxxx), from files_list or a message's AttachmentIDs.")),
+		mcp.WithString("save_path", mcp.Required(), mcp.Description("Local file path, or a directory (ending in /, or existing) to keep the file's own name; ~ works. Never overwrites an existing file.")),
+	), convs.FilesDownloadHandler)
 
 	add(ToolFilesList, "", mcp.NewTool(ToolFilesList,
 		mcp.WithDescription("List files the account can see, newest first, optionally only one channel's, one person's, or one type. Canvases and Lists are files too."),
@@ -190,7 +201,7 @@ func registerExtendedTools(s *server.MCPServer, registry *provider.Registry, ena
 	), convs.FilesListHandler)
 
 	add(ToolFilesInfo, "", mcp.NewTool(ToolFilesInfo,
-		mcp.WithDescription("Get a file's details: name, type, size, uploader, permalink, where it is shared. Use attachment_get_data to read its content."),
+		mcp.WithDescription("Get a file's details: name, type, size, uploader, permalink, where it is shared. Use attachment_get_data to read its content, files_download to save it."),
 		mcp.WithTitleAnnotation("Get File Info"),
 		mcp.WithReadOnlyHintAnnotation(true),
 		mcp.WithString("file_id", mcp.Required(), mcp.Description("File ID (Fxxxxxxxxxx).")),
