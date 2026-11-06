@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
+	"github.com/nitaiaharoni1/slack-mcp-server/pkg/text"
 	"github.com/slack-go/slack"
 	"go.uber.org/zap"
 )
@@ -273,7 +274,8 @@ func (ch *ConversationsHandler) PinsHandler(ctx context.Context, request mcp.Cal
 		out := make([]pin, 0, len(items))
 		for _, it := range items {
 			if it.Message != nil {
-				out = append(out, pin{Timestamp: it.Message.Timestamp, User: it.Message.User, Text: it.Message.Text})
+				body := text.ProcessText(text.MessageText(it.Message.Text, it.Message.Blocks))
+				out = append(out, pin{Timestamp: it.Message.Timestamp, User: it.Message.User, Text: body})
 			}
 		}
 		return jsonResult(map[string]any{"channel": channel, "pins": out})

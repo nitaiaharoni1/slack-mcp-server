@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/slack-go/slack"
 	"go.uber.org/zap"
@@ -67,43 +68,72 @@ func AttachmentToText(att slack.Attachment) string {
 	return result
 }
 
-// BlocksToText extracts text content from Slack Block Kit structures.
+// BlocksToText renders Slack Block Kit blocks as text, with a blank line
+// between blocks. What is inside them keeps its structure: line breaks, list
+// markers and their nesting, quotes, code, tables and dividers. Styles,
+// mentions and links use Slack's mrkdwn markup, as a message's text does.
 func BlocksToText(blocks slack.Blocks) string {
-	if len(blocks.BlockSet) == 0 {
-		return ""
-	}
-
 	var parts []string
 
 	for _, block := range blocks.BlockSet {
+		var part string
 		switch b := block.(type) {
 		case *slack.HeaderBlock:
-			if b.Text != nil && b.Text.Text != "" {
-				parts = append(parts, b.Text.Text)
+			if b.Text != nil {
+				part = b.Text.Text
 			}
 		case *slack.SectionBlock:
+			var lines []string
 			if b.Text != nil && b.Text.Text != "" {
-				parts = append(parts, b.Text.Text)
+				lines = append(lines, b.Text.Text)
 			}
 			for _, field := range b.Fields {
 				if field != nil && field.Text != "" {
-					parts = append(parts, field.Text)
+					lines = append(lines, field.Text)
 				}
 			}
+			part = strings.Join(lines, "\n")
 		case *slack.RichTextBlock:
-			if t := richTextBlockToText(b); t != "" {
-				parts = append(parts, t)
-			}
+			part = richTextBlockToText(b)
+		case *slack.TableBlock:
+			part = tableToText(b)
+		case *slack.DividerBlock:
+			part = "---"
 		case *slack.ContextBlock:
+			var texts []string
 			for _, elem := range b.ContextElements.Elements {
 				if txt, ok := elem.(*slack.TextBlockObject); ok && txt != nil && txt.Text != "" {
-					parts = append(parts, txt.Text)
+					texts = append(texts, txt.Text)
 				}
 			}
+			part = strings.Join(texts, " ")
+		}
+		if part = strings.Trim(part, "\n"); part != "" {
+			parts = append(parts, part)
 		}
 	}
 
-	return strings.Join(parts, " ")
+	return strings.Join(parts, "\n\n")
+}
+
+// MessageText returns a message's text, or its blocks rendered as text when
+// they hold more lines. Slack flattens the text of a message posted with
+// blocks, such as a markdown block, into a single line.
+func MessageText(msgText string, blocks slack.Blocks) string {
+	if blocksText := BlocksToText(blocks); contentLines(blocksText) > contentLines(msgText) {
+		return blocksText
+	}
+	return msgText
+}
+
+func contentLines(s string) int {
+	n := 0
+	for _, line := range strings.Split(s, "\n") {
+		if strings.TrimSpace(line) != "" {
+			n++
+		}
+	}
+	return n
 }
 
 // FilesToText extracts text metadata from email file attachments.
@@ -150,36 +180,101 @@ func FilesToText(files []slack.File) string {
 	return strings.Join(parts, " ")
 }
 
+// richTextBlockToText joins the elements of a rich text block. A section
+// carries its own line breaks; a list, quote or code block always starts and
+// ends a line.
 func richTextBlockToText(rtb *slack.RichTextBlock) string {
-	var parts []string
+	var b strings.Builder
 
 	for _, elem := range rtb.Elements {
-		if t := richTextElementToText(elem); t != "" {
-			parts = append(parts, t)
+		t := richTextElementToText(elem)
+		if t == "" {
+			continue
 		}
+		if b.Len() > 0 && !strings.HasSuffix(b.String(), "\n") {
+			b.WriteByte('\n')
+		}
+		b.WriteString(t)
 	}
 
-	return strings.Join(parts, " ")
+	return b.String()
 }
 
 func richTextElementToText(elem slack.RichTextElement) string {
 	switch e := elem.(type) {
 	case *slack.RichTextSection:
-		return richTextSectionToText(e)
+		return richTextSectionToText(e.Elements)
 	case *slack.RichTextList:
-		var parts []string
-		for _, listElem := range e.Elements {
-			if t := richTextElementToText(listElem); t != "" {
-				parts = append(parts, t)
+		return richTextListToText(e)
+	case *slack.RichTextQuote:
+		quoted := strings.Trim(richTextSectionToText(e.Elements), "\n")
+		if quoted == "" {
+			return ""
+		}
+		lines := strings.Split(quoted, "\n")
+		for i, line := range lines {
+			if line == "" {
+				lines[i] = ">"
+			} else {
+				lines[i] = "> " + line
 			}
 		}
-		return strings.Join(parts, " ")
-	case *slack.RichTextQuote:
-		return richTextSectionToText((*slack.RichTextSection)(e))
+		return strings.Join(lines, "\n")
 	case *slack.RichTextPreformatted:
-		return richTextSectionToText(&e.RichTextSection)
+		return "```\n" + strings.Trim(richTextSectionToText(e.Elements), "\n") + "\n```"
 	}
 	return ""
+}
+
+// richTextListToText writes one line per item, four spaces deeper per level
+// of nesting. Slack sends a nested list as a sibling list with a higher
+// indent, and a list that resumes numbering with an offset.
+func richTextListToText(l *slack.RichTextList) string {
+	indent := strings.Repeat("    ", l.Indent)
+	var lines []string
+	n := l.Offset
+	for _, elem := range l.Elements {
+		item := strings.Trim(richTextElementToText(elem), "\n")
+		if _, nested := elem.(*slack.RichTextList); nested {
+			lines = append(lines, item)
+			continue
+		}
+		marker := "- "
+		if l.Style == slack.RTEListOrdered {
+			n++
+			marker = strconv.Itoa(n) + ". "
+		}
+		item = strings.ReplaceAll(item, "\n", "\n"+indent+strings.Repeat(" ", len(marker)))
+		lines = append(lines, indent+marker+item)
+	}
+	return strings.Join(lines, "\n")
+}
+
+// tableToText writes a table block as a markdown table whose first row is the
+// header. A table with no text in any cell gives nothing.
+func tableToText(t *slack.TableBlock) string {
+	var lines []string
+	filled := false
+	for i, row := range t.Rows {
+		cells := make([]string, len(row))
+		for j, cell := range row {
+			if cell == nil {
+				continue
+			}
+			c := strings.Trim(richTextBlockToText(cell), "\n")
+			c = strings.ReplaceAll(strings.ReplaceAll(c, "|", `\|`), "\n", " ")
+			cells[j] = strings.TrimSpace(c)
+			filled = filled || cells[j] != ""
+		}
+		lines = append(lines, "| "+strings.Join(cells, " | ")+" |")
+		if i == 0 {
+			lines = append(lines, "|"+strings.Repeat(" --- |", len(row)))
+		}
+	}
+	if !filled {
+		return ""
+	}
+	return strings.Join(lines, "\n")
 }
 
 func formatEmailUser(u slack.EmailFileUserInfo) string {
@@ -194,29 +289,78 @@ func formatEmailUser(u slack.EmailFileUserInfo) string {
 	return ""
 }
 
-func richTextSectionToText(section *slack.RichTextSection) string {
-	var parts []string
+func richTextSectionToText(elems []slack.RichTextSectionElement) string {
+	var b strings.Builder
 
-	for _, elem := range section.Elements {
+	for _, elem := range elems {
 		switch e := elem.(type) {
 		case *slack.RichTextSectionTextElement:
-			if e.Text != "" {
-				parts = append(parts, e.Text)
-			}
+			b.WriteString(styleText(e.Text, e.Style))
 		case *slack.RichTextSectionLinkElement:
-			if e.Text != "" {
-				parts = append(parts, e.Text)
-			} else if e.URL != "" {
-				parts = append(parts, e.URL)
+			link := e.URL
+			if e.URL == "" {
+				link = e.Text
+			} else if e.Text != "" && e.Text != e.URL {
+				link = "<" + e.URL + "|" + e.Text + ">"
 			}
+			b.WriteString(styleText(link, e.Style))
+		case *slack.RichTextSectionUserElement:
+			b.WriteString(styleText("<@"+e.UserID+">", e.Style))
+		case *slack.RichTextSectionChannelElement:
+			b.WriteString(styleText("<#"+e.ChannelID+">", e.Style))
+		case *slack.RichTextSectionUserGroupElement:
+			b.WriteString("<!subteam^" + e.UsergroupID + ">")
 		case *slack.RichTextSectionBroadcastElement:
 			if e.Range != "" {
-				parts = append(parts, "@"+e.Range)
+				b.WriteString("<!" + e.Range + ">")
+			}
+		case *slack.RichTextSectionEmojiElement:
+			emoji := ":" + e.Name + ":"
+			if e.SkinTone > 0 {
+				emoji += ":skin-tone-" + strconv.Itoa(e.SkinTone) + ":"
+			}
+			b.WriteString(styleText(emoji, e.Style))
+		case *slack.RichTextSectionDateElement:
+			if e.Fallback != nil {
+				b.WriteString(*e.Fallback)
+			} else {
+				b.WriteString(e.Timestamp.Time().UTC().Format(time.RFC3339))
 			}
 		}
 	}
 
-	return strings.Join(parts, "")
+	return b.String()
+}
+
+// styleText wraps each line of s in mrkdwn style markers, leaving whitespace
+// and direction marks at either end outside them.
+func styleText(s string, style *slack.RichTextSectionTextStyle) string {
+	if style == nil {
+		return s
+	}
+	var open, closing string
+	for _, m := range []struct {
+		on   bool
+		mark string
+	}{{style.Bold, "*"}, {style.Italic, "_"}, {style.Strike, "~"}, {style.Code, "`"}} {
+		if m.on {
+			open += m.mark
+			closing = m.mark + closing
+		}
+	}
+	if open == "" {
+		return s
+	}
+	isPadding := func(r rune) bool { return unicode.IsSpace(r) || strings.ContainsRune(marks, r) }
+	lines := strings.Split(s, "\n")
+	for i, line := range lines {
+		left := strings.TrimLeftFunc(line, isPadding)
+		core := strings.TrimRightFunc(left, isPadding)
+		if core != "" {
+			lines[i] = line[:len(line)-len(left)] + open + core + closing + left[len(core):]
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func AttachmentsTo2CSV(msgText string, attachments []slack.Attachment) string {
@@ -369,7 +513,7 @@ var (
 	slackLinkRegex    = regexp.MustCompile(`<(https?://[^>|]+)\|([^>]+)>`)
 	markdownLinkRegex = regexp.MustCompile(`\[([^\]]+)\]\((https?://[^)]+)\)`)
 	htmlLinkRegex     = regexp.MustCompile(`<a\s+href=["']([^"']+)["'][^>]*>([^<]+)</a>`)
-	inlineSpaceRegex  = regexp.MustCompile(`[ \t]+`)
+	inlineSpaceRegex  = regexp.MustCompile(`(\S)[ \t]+`)
 )
 
 func normalizeLinks(text string) string {
@@ -440,6 +584,13 @@ func stripUnsafeRunes(s string) string {
 	return b.String()
 }
 
+// collapseInlineSpaces squeezes runs of spaces and tabs after a word into one
+// space. Indentation, which carries list nesting, and code inside ``` fences
+// are left as they are.
 func collapseInlineSpaces(s string) string {
-	return inlineSpaceRegex.ReplaceAllString(s, " ")
+	parts := strings.Split(s, "```")
+	for i := 0; i < len(parts); i += 2 {
+		parts[i] = inlineSpaceRegex.ReplaceAllString(parts[i], "${1} ")
+	}
+	return strings.Join(parts, "```")
 }

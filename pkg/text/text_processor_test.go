@@ -1,6 +1,8 @@
 package text
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/slack-go/slack"
@@ -64,7 +66,7 @@ func TestBlocksToText(t *testing.T) {
 					},
 				},
 			},
-			want: "Main text Field 1 Field 2",
+			want: "Main text\nField 1\nField 2",
 		},
 		{
 			name: "context block",
@@ -136,7 +138,7 @@ func TestBlocksToText(t *testing.T) {
 					},
 				},
 			},
-			want: "Click here",
+			want: "Click <https://example.com|here>",
 		},
 		{
 			name: "rich text link without display text falls back to URL",
@@ -191,10 +193,10 @@ func TestBlocksToText(t *testing.T) {
 					},
 				},
 			},
-			want: "Alert Server is down sent by monitoring",
+			want: "Alert\n\nServer is down\n\nsent by monitoring",
 		},
 		{
-			name: "divider and image blocks are skipped",
+			name: "divider renders as a rule",
 			blocks: slack.Blocks{
 				BlockSet: []slack.Block{
 					&slack.SectionBlock{
@@ -209,7 +211,7 @@ func TestBlocksToText(t *testing.T) {
 					},
 				},
 			},
-			want: "visible text",
+			want: "visible text\n\n---",
 		},
 		{
 			name: "rich text with broadcast element",
@@ -235,7 +237,7 @@ func TestBlocksToText(t *testing.T) {
 					},
 				},
 			},
-			want: "@channel please review",
+			want: "<!channel> please review",
 		},
 		{
 			name: "section block with nil text",
@@ -258,6 +260,143 @@ func TestBlocksToText(t *testing.T) {
 			got := BlocksToText(tt.blocks)
 			if got != tt.want {
 				t.Errorf("BlocksToText() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+// The blocks Slack stores for a message posted as a markdown block, decoded
+// the way the handlers receive them.
+const markdownMessageBlocks = `[
+	{"type": "header", "text": {"type": "plain_text", "text": "Title"}},
+	{"type": "rich_text", "elements": [
+		{"type": "rich_text_section", "elements": [
+			{"type": "text", "text": "\u200fשלום "},
+			{"type": "text", "text": "מודגש\u200f", "style": {"bold": true}},
+			{"type": "text", "text": ", "},
+			{"type": "user", "user_id": "U1"},
+			{"type": "text", "text": " "},
+			{"type": "link", "url": "https://slack.com", "text": "site"},
+			{"type": "text", "text": "\n"},
+			{"type": "text", "text": "second line with "},
+			{"type": "text", "text": "code", "style": {"code": true}},
+			{"type": "text", "text": "\n\n"}
+		]},
+		{"type": "rich_text_list", "style": "bullet", "indent": 0, "elements": [
+			{"type": "rich_text_section", "elements": [{"type": "text", "text": "one"}]}
+		]},
+		{"type": "rich_text_list", "style": "bullet", "indent": 1, "elements": [
+			{"type": "rich_text_section", "elements": [{"type": "text", "text": "nested"}]}
+		]},
+		{"type": "rich_text_list", "style": "ordered", "indent": 0, "elements": [
+			{"type": "rich_text_section", "elements": [{"type": "text", "text": "first"}]},
+			{"type": "rich_text_section", "elements": [{"type": "text", "text": "second"}]}
+		]},
+		{"type": "rich_text_list", "style": "ordered", "indent": 1, "elements": [
+			{"type": "rich_text_section", "elements": [{"type": "text", "text": "sub"}]}
+		]},
+		{"type": "rich_text_list", "style": "ordered", "indent": 0, "offset": 2, "elements": [
+			{"type": "rich_text_section", "elements": [{"type": "text", "text": "third"}]}
+		]},
+		{"type": "rich_text_section", "elements": [{"type": "text", "text": "\n"}]},
+		{"type": "rich_text_quote", "elements": [{"type": "text", "text": "quoted\nmore"}]},
+		{"type": "rich_text_section", "elements": [{"type": "text", "text": "\n"}]},
+		{"type": "rich_text_preformatted", "elements": [{"type": "text", "text": "x  =  1\n  y"}]}
+	]},
+	{"type": "divider"},
+	{"type": "table", "rows": [
+		[
+			{"type": "rich_text", "elements": [{"type": "rich_text_section", "elements": [{"type": "text", "text": "Name"}]}]},
+			{"type": "rich_text", "elements": [{"type": "rich_text_section", "elements": [{"type": "text", "text": "Role"}]}]}
+		],
+		[
+			{"type": "rich_text", "elements": [{"type": "rich_text_section", "elements": [{"type": "text", "text": "Dana"}]}]},
+			{"type": "rich_text", "elements": [{"type": "rich_text_section", "elements": [{"type": "text", "text": "a|b"}]}]}
+		]
+	]}
+]`
+
+func TestBlocksToTextKeepsMarkdownStructure(t *testing.T) {
+	var blocks slack.Blocks
+	if err := json.Unmarshal([]byte(markdownMessageBlocks), &blocks); err != nil {
+		t.Fatal(err)
+	}
+
+	want := "Title\n\n" +
+		"\u200fשלום *מודגש*\u200f, <@U1> <https://slack.com|site>\n" +
+		"second line with `code`\n\n" +
+		"- one\n" +
+		"    - nested\n" +
+		"1. first\n" +
+		"2. second\n" +
+		"    1. sub\n" +
+		"3. third\n\n" +
+		"> quoted\n" +
+		"> more\n\n" +
+		"```\nx  =  1\n  y\n```\n\n" +
+		"---\n\n" +
+		"| Name | Role |\n" +
+		"| --- | --- |\n" +
+		"| Dana | a\\|b |"
+	got := BlocksToText(blocks)
+	if got != want {
+		t.Fatalf("BlocksToText()\n  got:  %q\n  want: %q", got, want)
+	}
+
+	processed := ProcessText(got)
+	for _, keep := range []string{"שלום *מודגש*, <@U1>", "\n    - nested\n", "\n    1. sub\n", "x  =  1\n  y"} {
+		if !strings.Contains(processed, keep) {
+			t.Errorf("ProcessText(BlocksToText()) lost %q:\n%s", keep, processed)
+		}
+	}
+	if strings.ContainsAny(processed, "\u200e\u200f") {
+		t.Errorf("ProcessText(BlocksToText()) kept direction marks: %q", processed)
+	}
+}
+
+func TestStyleText(t *testing.T) {
+	tests := []struct {
+		name  string
+		text  string
+		style *slack.RichTextSectionTextStyle
+		want  string
+	}{
+		{"no style", "plain", nil, "plain"},
+		{"bold keeps spaces outside", "  bold  ", &slack.RichTextSectionTextStyle{Bold: true}, "  *bold*  "},
+		{"direction marks stay outside", "\u200fמודגש\u200f", &slack.RichTextSectionTextStyle{Bold: true}, "\u200f*מודגש*\u200f"},
+		{"each line wrapped", "a\nb", &slack.RichTextSectionTextStyle{Italic: true}, "_a_\n_b_"},
+		{"styles nest", "x", &slack.RichTextSectionTextStyle{Bold: true, Italic: true, Strike: true, Code: true}, "*_~`x`~_*"},
+		{"whitespace only", "\n", &slack.RichTextSectionTextStyle{Bold: true}, "\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := styleText(tt.text, tt.style); got != tt.want {
+				t.Errorf("styleText() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMessageText(t *testing.T) {
+	section := func(s string) *slack.SectionBlock {
+		return &slack.SectionBlock{Type: slack.MBTSection, Text: &slack.TextBlockObject{Type: "mrkdwn", Text: s}}
+	}
+	tests := []struct {
+		name   string
+		text   string
+		blocks []slack.Block
+		want   string
+	}{
+		{"flattened text loses to blocks", "Title intro - one - two", []slack.Block{section("Title"), section("intro\n- one\n- two")}, "Title\n\nintro\n- one\n- two"},
+		{"same line count keeps text", "a\nb", []slack.Block{section("a\nb")}, "a\nb"},
+		{"blank lines between blocks do not count", "a\nb", []slack.Block{section("a"), section("b")}, "a\nb"},
+		{"empty text uses blocks", "", []slack.Block{section("only blocks")}, "only blocks"},
+		{"no blocks keeps text", "just text", nil, "just text"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := MessageText(tt.text, slack.Blocks{BlockSet: tt.blocks}); got != tt.want {
+				t.Errorf("MessageText() = %q, want %q", got, tt.want)
 			}
 		})
 	}
@@ -716,6 +855,16 @@ func TestProcessText_PreservesContent(t *testing.T) {
 			name:     "preserves newlines, collapses inline spaces",
 			input:    "first line\n\nsecond  line   with   gaps",
 			expected: "first line\n\nsecond line with gaps",
+		},
+		{
+			name:     "keeps the indentation of nested list items",
+			input:    "- a\n    - b  c\n        1. d",
+			expected: "- a\n    - b c\n        1. d",
+		},
+		{
+			name:     "keeps spacing inside code fences",
+			input:    "run:\n```\nx  =  1\n\ty\n```\nafter   this",
+			expected: "run:\n```\nx  =  1\n\ty\n```\nafter this",
 		},
 		{
 			name:     "strips bidi override (prompt injection vector)",

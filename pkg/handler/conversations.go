@@ -1773,10 +1773,7 @@ func (ch *ConversationsHandler) convertMessagesFromHistory(ctx context.Context, 
 			continue
 		}
 
-		msgText := msg.Text
-		if msgText == "" {
-			msgText = text.BlocksToText(msg.Blocks)
-		}
+		msgText := text.MessageText(msg.Text, msg.Blocks)
 		if msgText == "" {
 			msgText = text.FilesToText(msg.Files)
 		}
@@ -1858,10 +1855,7 @@ func (ch *ConversationsHandler) convertMessagesFromSearch(ctx context.Context, s
 			continue
 		}
 
-		msgText := msg.Text
-		if msgText == "" {
-			msgText = text.BlocksToText(msg.Blocks)
-		}
+		msgText := text.MessageText(msg.Text, msg.Blocks)
 		msgText += text.AttachmentsTo2CSV(msgText, msg.Attachments)
 
 		hasMedia := hasImageBlocks(msg.Blocks)
