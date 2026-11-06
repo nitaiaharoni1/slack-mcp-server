@@ -486,8 +486,8 @@ func TimestampToIsoRFC3339(slackTS string) (string, error) {
 }
 
 func ProcessText(s string) string {
+	s = stripUnsafeRunes(s) // first, so direction marks don't hide what follows a link
 	s = normalizeLinks(s)
-	s = stripUnsafeRunes(s)
 	s = collapseInlineSpaces(s)
 	s = slackEntities.Replace(s) // Slack stores &, < and > as entities
 
@@ -517,18 +517,23 @@ var (
 )
 
 func normalizeLinks(text string) string {
-	isLastInText := func(original string, currentText string) bool {
-		linkPos := strings.LastIndex(currentText, original)
+	// A comma ends a link's label when words follow it. Punctuation or a line
+	// end right after the link already does that.
+	needsComma := func(original string, currentText string) bool {
+		linkPos := strings.Index(currentText, original)
 		if linkPos == -1 {
 			return false
 		}
-		afterLink := strings.TrimSpace(currentText[linkPos+len(original):])
-		return afterLink == ""
+		after := strings.TrimLeft(currentText[linkPos+len(original):], " \t")
+		if after == "" || after[0] == '\n' || after[0] == '\r' {
+			return false
+		}
+		return strings.IndexFunc(after, unicode.IsPunct) != 0
 	}
 
-	render := func(url, linkText string, isLast bool) string {
+	render := func(url, linkText string, comma bool) string {
 		out := url + " - " + linkText
-		if !isLast {
+		if comma {
 			out += ","
 		}
 		return out
@@ -536,17 +541,17 @@ func normalizeLinks(text string) string {
 
 	for _, match := range slackLinkRegex.FindAllStringSubmatch(text, -1) {
 		original := match[0]
-		text = strings.Replace(text, original, render(match[1], match[2], isLastInText(original, text)), 1)
+		text = strings.Replace(text, original, render(match[1], match[2], needsComma(original, text)), 1)
 	}
 
 	for _, match := range markdownLinkRegex.FindAllStringSubmatch(text, -1) {
 		original := match[0]
-		text = strings.Replace(text, original, render(match[2], match[1], isLastInText(original, text)), 1)
+		text = strings.Replace(text, original, render(match[2], match[1], needsComma(original, text)), 1)
 	}
 
 	for _, match := range htmlLinkRegex.FindAllStringSubmatch(text, -1) {
 		original := match[0]
-		text = strings.Replace(text, original, render(match[1], match[2], isLastInText(original, text)), 1)
+		text = strings.Replace(text, original, render(match[1], match[2], needsComma(original, text)), 1)
 	}
 
 	return text

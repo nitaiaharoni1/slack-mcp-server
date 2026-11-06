@@ -778,6 +778,36 @@ func TestProcessText_LinkNormalization(t *testing.T) {
 			input:    `Visit <a href="https://example.com">Example</a>`,
 			expected: "Visit https://example.com - Example",
 		},
+		{
+			name:     "no comma before a period",
+			input:    "קישור: <https://slack.com|אתר סלאק>. מאת",
+			expected: "קישור: https://slack.com - אתר סלאק. מאת",
+		},
+		{
+			name:     "no second comma",
+			input:    "ו-<https://slack.com|קישור>, עם סוף.",
+			expected: "ו-https://slack.com - קישור, עם סוף.",
+		},
+		{
+			name:     "no comma before a closing paren or style marker",
+			input:    "(<https://a.com|A>) and *<https://b.com|B>* done",
+			expected: "(https://a.com - A) and *https://b.com - B* done",
+		},
+		{
+			name:     "no comma at a line end",
+			input:    "<https://a.com|A>\n<https://b.com|B>  \nnext",
+			expected: "https://a.com - A\nhttps://b.com - B \nnext",
+		},
+		{
+			name:     "direction mark does not hide the punctuation after a link",
+			input:    "<https://a.com|A>‏. next",
+			expected: "https://a.com - A. next",
+		},
+		{
+			name:     "same link twice gets its own comma each time",
+			input:    "<https://a.com|A> and <https://a.com|A>.",
+			expected: "https://a.com - A, and https://a.com - A.",
+		},
 	}
 
 	for _, tt := range tests {
