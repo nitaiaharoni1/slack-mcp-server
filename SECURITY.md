@@ -6,7 +6,7 @@ Actively maintained and supported are the following versions:
 
 | Version   | Supported          |
 |-----------|--------------------|
-| `1.4.x`   | ✅                 |
+| `1.5.x`   | ✅                 |
 
 If you're using an unsupported version, we strongly recommend upgrading to the latest release.
 
