@@ -183,6 +183,20 @@ func findDraft(ctx context.Context, api provider.DraftCaller, id string) (*slack
 	return nil, fmt.Errorf("draft %s not found: drafts_list shows the account's drafts", id)
 }
 
+// findCurrentDraft refuses a draft that changed since the caller read it, such
+// as an edit its owner made in Slack. Slack does not check this itself: it
+// accepts a stale client_last_updated_ts and overwrites the draft.
+func findCurrentDraft(ctx context.Context, api provider.DraftCaller, id, lastUpdatedTs string) (*slackDraft, error) {
+	draft, err := findDraft(ctx, api, id)
+	if err != nil {
+		return nil, err
+	}
+	if padDraftTs(draft.LastUpdatedTs) != padDraftTs(lastUpdatedTs) {
+		return nil, fmt.Errorf("draft %s changed since last_updated_ts %s, now %s: read it again with drafts_list before changing it", id, lastUpdatedTs, draft.LastUpdatedTs)
+	}
+	return draft, nil
+}
+
 func updateDraft(ctx context.Context, api provider.DraftCaller, id, lastUpdatedTs, body string, destinations []draftDestination, fileIDs []string) (*slackDraft, error) {
 	form, err := draftForm(body, destinations, fileIDs)
 	if err != nil {
@@ -285,7 +299,7 @@ func (ch *ConversationsHandler) DraftsUpdateHandler(ctx context.Context, request
 	if err != nil {
 		return nil, err
 	}
-	current, err := findDraft(ctx, api, id)
+	current, err := findCurrentDraft(ctx, api, id, lastUpdatedTs)
 	if err != nil {
 		return nil, err
 	}
@@ -329,6 +343,9 @@ func (ch *ConversationsHandler) DraftsDeleteHandler(ctx context.Context, request
 	}
 	api, err := ch.ap(ctx).Drafts()
 	if err != nil {
+		return nil, err
+	}
+	if _, err := findCurrentDraft(ctx, api, id, lastUpdatedTs); err != nil {
 		return nil, err
 	}
 	if err := deleteDraft(ctx, api, id, lastUpdatedTs); err != nil {

@@ -141,6 +141,29 @@ func TestUnitFindDraftNotFound(t *testing.T) {
 	assert.Equal(t, "Dr1", found.ID)
 }
 
+func TestUnitFindCurrentDraft(t *testing.T) {
+	api := &fakeDrafts{responses: map[string]string{"drafts.list": `{"drafts":[` + rawDraftJSON + `]}`}}
+
+	t.Run("same timestamp, also when padded", func(t *testing.T) {
+		for _, ts := range []string{"1700000000.123", "1700000000.1230000"} {
+			found, err := findCurrentDraft(context.Background(), api, "Dr1", ts)
+			require.NoError(t, err)
+			assert.Equal(t, "Dr1", found.ID)
+		}
+	})
+
+	t.Run("a draft edited since is refused", func(t *testing.T) {
+		_, err := findCurrentDraft(context.Background(), api, "Dr1", "1699999999.000")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "changed since")
+	})
+
+	t.Run("a missing draft is refused", func(t *testing.T) {
+		_, err := findCurrentDraft(context.Background(), api, "Dr404", "1700000000.123")
+		assert.Error(t, err)
+	})
+}
+
 func TestUnitUpdateDraftKeepsBroadcastAndPadsTs(t *testing.T) {
 	api := &fakeDrafts{responses: map[string]string{"drafts.update": `{"draft":` + rawDraftJSON + `}`}}
 	dest := []draftDestination{{ChannelID: "C1", ThreadTs: "1699.000100", Broadcast: true}}
