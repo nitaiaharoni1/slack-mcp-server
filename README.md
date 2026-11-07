@@ -23,6 +23,7 @@ This fork of [korotovsky/slack-mcp-server](https://github.com/korotovsky/slack-m
 
 - **Multiple accounts in one server.** Every tool takes an optional `account` argument; `list_accounts` shows each account's workspace, user and token type. Each account has its own client, caches and rate limiter.
 - **Messages:** `messages_update`, `messages_delete`, `messages_schedule`, `messages_scheduled_list`, `messages_scheduled_delete`, `messages_permalink`. Writes follow the `SLACK_MCP_ADD_MESSAGE_TOOL` channel policy.
+- **Drafts:** `drafts_create` (a DM or channel, optionally a thread, optionally with files), `drafts_list`, `drafts_update`, `drafts_delete`. Saved in Slack and never sent: you open them under Drafts & sent and press send. Writes follow the `SLACK_MCP_ADD_MESSAGE_TOOL` channel policy. Draft text is plain, with working mentions and links.
 - **Forward and broadcast:** `messages_forward` (posts the permalink, which Slack shows as the shared message; same workspace only), `reply_broadcast` on `conversations_add_message`.
 - **Files, channels, presence:** `files_list`, `files_search`, `files_info`, `files_delete` (canvases and Lists are files too), `conversations_manage` (archive, unarchive, rename, kick), `bookmarks`, `presence` (get, set auto / away), `dnd` (info, snooze, end).
 - **Files and people:** `files_upload` (up to 1 GB, same policy), `files_download` (saves to disk at any size; stdio only; needs `SLACK_MCP_ATTACHMENT_TOOL`), `users_info` (full profile with custom fields), `users_set_status`, `reminders_add` (Slack's API can no longer list or delete reminders), `emoji_search`.
@@ -51,7 +52,7 @@ Without `SLACK_MCP_ACCOUNTS` the server reads the upstream single-account variab
 
 Getting a user token: create an app from [`docs/slack-app-manifest.json`](docs/slack-app-manifest.json) at api.slack.com/apps ("From a manifest"), install it to the workspace, and copy the **User OAuth Token** (`xoxp-...`). Repeat per workspace.
 
-Not available through Slack's public API, so not here: message drafts.
+Drafts need session tokens. Slack's `drafts.*` methods are internal: undocumented, able to change without notice, and refused for `xoxp` tokens with `not_allowed_token_type`. An account can hold both kinds: add `SLACK_MCP_WORK_XOXC_TOKEN` and `SLACK_MCP_WORK_XOXD_TOKEN` next to its `_XOXP_TOKEN`. The `xoxp` token keeps doing everything else and only the draft tools use the session pair. It must belong to the same user and workspace, or the draft tools refuse it. The pair carries your full browser session with no scopes to limit it, and it stops working when that session ends, so keep it out of anything shared. Drafts can be flagged on Enterprise Grid, where session-token use may trip Slack's anomaly detection.
 
 ### Analytics Demo
 

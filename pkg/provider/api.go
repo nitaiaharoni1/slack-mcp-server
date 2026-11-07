@@ -282,6 +282,12 @@ type ApiProvider struct {
 	client    SlackAPI
 	logger    *zap.Logger
 
+	// sessionAuth holds browser session tokens set next to an OAuth token. They
+	// reach only the drafts.* methods; everything else stays on client.
+	sessionAuth  auth.Provider
+	draftsMu     sync.Mutex
+	draftsClient *MCPSlackClient
+
 	rateLimiter        *rate.Limiter
 	cacheTTL           time.Duration
 	minRefreshInterval time.Duration
@@ -694,6 +700,8 @@ func NewFromCredentials(transport string, creds Credentials, singleAccount bool,
 		transport: transport,
 		client:    client,
 		logger:    logger,
+
+		sessionAuth: creds.sessionAuth(logger),
 
 		rateLimiter:        limiter.Tier2.Limiter(),
 		cacheTTL:           getCacheTTL(),

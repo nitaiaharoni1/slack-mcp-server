@@ -118,6 +118,7 @@ func TestValidToolNames(t *testing.T) {
 			ToolSavedClearCompleted:         true,
 		}
 		for _, tool := range []string{
+			ToolDraftsCreate, ToolDraftsList, ToolDraftsUpdate, ToolDraftsDelete,
 			ToolListAccounts, ToolMessagesUpdate, ToolMessagesDelete, ToolMessagesSchedule,
 			ToolMessagesScheduledList, ToolMessagesScheduledDelete, ToolMessagesPermalink, ToolMessagesForward,
 			ToolFilesUpload, ToolFilesDownload, ToolFilesList, ToolFilesSearch, ToolFilesInfo, ToolFilesDelete, ToolUsersInfo,

@@ -19,6 +19,10 @@ const (
 	ToolMessagesSchedule        = "messages_schedule"
 	ToolMessagesScheduledList   = "messages_scheduled_list"
 	ToolMessagesScheduledDelete = "messages_scheduled_delete"
+	ToolDraftsCreate            = "drafts_create"
+	ToolDraftsList              = "drafts_list"
+	ToolDraftsUpdate            = "drafts_update"
+	ToolDraftsDelete            = "drafts_delete"
 	ToolMessagesPermalink       = "messages_permalink"
 	ToolMessagesForward         = "messages_forward"
 	ToolFilesUpload             = "files_upload"
@@ -67,6 +71,7 @@ func init() {
 		ToolConversationsCreate, ToolConversationsInfo, ToolConversationsMembers, ToolConversationsInvite,
 		ToolConversationsSetTopic, ToolConversationsManage, ToolReactionsGet, ToolEmojiSearch, ToolPins,
 		ToolBookmarks, ToolRemindersAdd, ToolUsersSetStatus, ToolPresence, ToolDND,
+		ToolDraftsCreate, ToolDraftsList, ToolDraftsUpdate, ToolDraftsDelete,
 	)
 }
 
@@ -149,6 +154,45 @@ func registerExtendedTools(s *server.MCPServer, registry *provider.Registry, ena
 		mcp.WithString("channel_id", mcp.Required(), mcp.Description(channelArgDescription)),
 		mcp.WithString("scheduled_message_id", mcp.Required(), mcp.Description("ID from messages_schedule or messages_scheduled_list.")),
 	), convs.ScheduledDeleteHandler)
+
+	// Drafts: Slack's internal drafts.* methods, which need session tokens.
+	const draftTextDescription = "Draft text, shown as written: no markdown formatting or :emoji:, but <@U...> mentions and links work and Hebrew and other RTL lines get their direction. Up to 12,000 characters."
+	add(ToolDraftsCreate, "SLACK_MCP_ADD_MESSAGE_TOOL", mcp.NewTool(ToolDraftsCreate,
+		mcp.WithDescription("Save a message as a draft in Slack without sending it: the account's user opens it under Drafts & sent and presses send. Needs the account's xoxc and xoxd session tokens. Same channel policy as conversations_add_message."),
+		mcp.WithTitleAnnotation("Create Draft"),
+		mcp.WithString("channel_id", mcp.Required(), mcp.Description(channelArgDescription)),
+		mcp.WithString("text", mcp.Required(), mcp.Description(draftTextDescription)),
+		mcp.WithString("thread_ts", mcp.Description("Optional ts of a thread to reply in.")),
+		mcp.WithString("file_ids", mcp.Description("Optional comma-separated file IDs to attach: upload with files_upload and no channel_id, so the file is not shared yet.")),
+	), convs.DraftsCreateHandler)
+
+	add(ToolDraftsList, "", mcp.NewTool(ToolDraftsList,
+		mcp.WithDescription("List the account's Slack drafts with the draft_id and last_updated_ts that drafts_update and drafts_delete need. Needs the account's xoxc and xoxd session tokens."),
+		mcp.WithTitleAnnotation("List Drafts"),
+		mcp.WithReadOnlyHintAnnotation(true),
+		mcp.WithNumber("limit", mcp.DefaultNumber(50), mcp.Description("Maximum drafts to return.")),
+		mcp.WithBoolean("include_inactive", mcp.Description("Also return drafts Slack no longer treats as active.")),
+	), convs.DraftsListHandler)
+
+	add(ToolDraftsUpdate, "SLACK_MCP_ADD_MESSAGE_TOOL", mcp.NewTool(ToolDraftsUpdate,
+		mcp.WithDescription("Replace a Slack draft's text without sending it. It keeps its destination and files unless given new ones. Needs the account's xoxc and xoxd session tokens."),
+		mcp.WithTitleAnnotation("Update Draft"),
+		mcp.WithDestructiveHintAnnotation(true),
+		mcp.WithString("draft_id", mcp.Required(), mcp.Description("ID from drafts_create or drafts_list.")),
+		mcp.WithString("last_updated_ts", mcp.Required(), mcp.Description("last_updated_ts from drafts_create or drafts_list. Slack uses it to refuse the update if the draft has changed since.")),
+		mcp.WithString("text", mcp.Required(), mcp.Description(draftTextDescription)),
+		mcp.WithString("channel_id", mcp.Description("Optional new destination. "+channelArgDescription)),
+		mcp.WithString("thread_ts", mcp.Description("Optional ts of a thread to reply in.")),
+		mcp.WithString("file_ids", mcp.Description("Optional comma-separated file IDs replacing the attached ones; empty removes them all.")),
+	), convs.DraftsUpdateHandler)
+
+	add(ToolDraftsDelete, "SLACK_MCP_ADD_MESSAGE_TOOL", mcp.NewTool(ToolDraftsDelete,
+		mcp.WithDescription("Delete a Slack draft. Needs the account's xoxc and xoxd session tokens."),
+		mcp.WithTitleAnnotation("Delete Draft"),
+		mcp.WithDestructiveHintAnnotation(true),
+		mcp.WithString("draft_id", mcp.Required(), mcp.Description("ID from drafts_create or drafts_list.")),
+		mcp.WithString("last_updated_ts", mcp.Required(), mcp.Description("last_updated_ts from drafts_create or drafts_list. Slack uses it to refuse the delete if the draft has changed since.")),
+	), convs.DraftsDeleteHandler)
 
 	add(ToolMessagesPermalink, "", mcp.NewTool(ToolMessagesPermalink,
 		mcp.WithDescription("Get the permalink of a message."),
