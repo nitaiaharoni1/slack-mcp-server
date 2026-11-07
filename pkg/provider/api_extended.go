@@ -252,6 +252,11 @@ func (c *MCPSlackClient) APICall(ctx context.Context, method string, body any, o
 	if err != nil {
 		return fmt.Errorf("%s: %w", method, err)
 	}
+	return decodeAPIResponse(method, resp, out)
+}
+
+// decodeAPIResponse reads a Web API response into out and closes its body.
+func decodeAPIResponse(method string, resp *http.Response, out any) error {
 	defer resp.Body.Close()
 
 	raw, err := io.ReadAll(resp.Body)

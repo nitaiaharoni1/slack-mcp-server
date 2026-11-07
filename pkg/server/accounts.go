@@ -196,6 +196,10 @@ var botUnsupportedTools = map[string]bool{
 	ToolSavedList:                   true,
 	ToolSavedUpdate:                 true,
 	ToolSavedClearCompleted:         true,
+	ToolDraftsCreate:                true,
+	ToolDraftsList:                  true,
+	ToolDraftsUpdate:                true,
+	ToolDraftsDelete:                true,
 }
 
 var sessionOnlyTools = map[string]bool{
