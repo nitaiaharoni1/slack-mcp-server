@@ -179,7 +179,7 @@ func registerExtendedTools(s *server.MCPServer, registry *provider.Registry, ena
 		mcp.WithTitleAnnotation("Update Draft"),
 		mcp.WithDestructiveHintAnnotation(true),
 		mcp.WithString("draft_id", mcp.Required(), mcp.Description("ID from drafts_create or drafts_list.")),
-		mcp.WithString("last_updated_ts", mcp.Required(), mcp.Description("last_updated_ts from drafts_create or drafts_list. Slack uses it to refuse the update if the draft has changed since.")),
+		mcp.WithString("last_updated_ts", mcp.Required(), mcp.Description("last_updated_ts from drafts_create or drafts_list. The update is refused if the draft has changed since.")),
 		mcp.WithString("text", mcp.Required(), mcp.Description(draftTextDescription)),
 		mcp.WithString("channel_id", mcp.Description("Optional new destination. "+channelArgDescription)),
 		mcp.WithString("thread_ts", mcp.Description("Optional ts of a thread to reply in.")),
@@ -191,7 +191,7 @@ func registerExtendedTools(s *server.MCPServer, registry *provider.Registry, ena
 		mcp.WithTitleAnnotation("Delete Draft"),
 		mcp.WithDestructiveHintAnnotation(true),
 		mcp.WithString("draft_id", mcp.Required(), mcp.Description("ID from drafts_create or drafts_list.")),
-		mcp.WithString("last_updated_ts", mcp.Required(), mcp.Description("last_updated_ts from drafts_create or drafts_list. Slack uses it to refuse the delete if the draft has changed since.")),
+		mcp.WithString("last_updated_ts", mcp.Required(), mcp.Description("last_updated_ts from drafts_create or drafts_list. The delete is refused if the draft has changed since.")),
 	), convs.DraftsDeleteHandler)
 
 	add(ToolMessagesPermalink, "", mcp.NewTool(ToolMessagesPermalink,
